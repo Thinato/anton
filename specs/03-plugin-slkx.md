@@ -62,7 +62,8 @@ broadcast to the channel (`subtype: thread_broadcast`), since slkx's channel
 read does not return other replies.
 
 **Review channel.**
-- PR posted → on list `code-review`.
+- PR posted → on list `code-review`, with `order` = the ts of its newest post
+  there, so the view matches the channel: newest on top, a repost moves it up.
 - Reviewers = users with a review emoji on **any** message naming that PR
   (union — the same PR is often reposted). Tag per reviewer, sorted:
   `{"glyph": "👀", "text": "<handle>", "hint": "reviewing, via Slack"}`.

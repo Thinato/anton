@@ -159,7 +159,8 @@ kinds, since `org:` and `repo:` are in the local subset.
 - **TAGS**: plugin-provided (see `02-plugins.md`), e.g. `👀 alice`.
 - **TITLE**: takes the remaining width, truncated with `…`.
 
-Sort: `updatedAt` descending. `s` cycles: updated → created → size → repo.
+Sort is per view. Search views: `updatedAt` descending; `s` cycles updated → created → size → repo.
+List views start on `list` (the plugin's `order`, higher first; PRs without one go last, by update) and `s` cycles list → updated → created → size → repo.
 
 ## Compact line counts
 

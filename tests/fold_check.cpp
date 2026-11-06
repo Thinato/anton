@@ -49,6 +49,7 @@ int main() {
   assert(l["lists"] == json({"code-review"}));
   assert((handles(l) == std::vector<std::string>{"alice", "you"}));
   assert(!l.contains("status"));
+  assert(l["order"] == 1700000000.0001);
 
   // changed() emits once, then dedupes
   assert(f.changed({PR1}).size() == 1);
@@ -74,6 +75,7 @@ int main() {
   f.event(msg("CR", "1700000000.000400", PR1));
   f.event(react(true, "CR", "1700000000.000400", "eyes", "UA"));
   assert((handles(f.line(PR1)) == std::vector<std::string>{"alice", "bob", "you"}));
+  assert(f.line(PR1)["order"] == 1700000000.0004);  // the repost moves it to the top
   json del = {{"type", "message"}, {"subtype", "message_deleted"}, {"channel", "CR"},
               {"deleted_ts", "1700000000.000100"}};
   assert(f.event(del).count(PR1));

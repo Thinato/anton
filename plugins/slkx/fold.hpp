@@ -2,6 +2,8 @@
 // anton-slkx's pure core: Slack messages and RTM events in, anton plugin lines
 // out. No I/O, so tests/fold_check.cpp drives it with recorded JSON.
 
+#include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <regex>
 #include <set>
@@ -123,11 +125,12 @@ class Fold {
     bool listed = false;
     std::set<std::string> reviewers;
     const Msg* deploy = nullptr;
-    std::string deploy_ts;
+    std::string deploy_ts, review_ts;
     for (auto& [key, msg] : msgs_) {
       if (std::find(msg.urls.begin(), msg.urls.end(), url) == msg.urls.end()) continue;
       if (key.first == c_.review_ch) {
         listed = true;
+        review_ts = std::max(review_ts, key.second);
         for (auto& [emoji, user] : msg.reacts)
           if (c_.review_emoji.count(emoji)) reviewers.insert(user);
       }
@@ -139,7 +142,11 @@ class Fold {
       }
     }
     json j = {{"pr", url}};
-    if (listed) j["lists"] = {"code-review"};
+    if (listed) {
+      j["lists"] = {"code-review"};
+      // Newest post first, like the channel. A double holds a ts to ~1µs.
+      j["order"] = std::strtod(review_ts.c_str(), nullptr);
+    }
     if (deploy) {
       const Step* st = &c_.posted;
       for (auto& step : c_.steps)

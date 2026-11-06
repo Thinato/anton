@@ -3,6 +3,7 @@
 #include <signal.h>
 
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -54,7 +55,7 @@ struct Ui {
   std::vector<View> views;
   size_t active = 0;
   std::string scope;  // "org:x" / "repo:o/n" / ""
-  Sort sort = Sort::Updated;
+  std::vector<Sort> sorts;  // per view
   std::map<std::string, Pr> cache;                           // by URL
   std::map<std::string, std::vector<std::string>> results;   // search query -> URLs
   std::set<std::string> requested;                           // URLs ever asked for
@@ -88,6 +89,7 @@ struct Ui {
   std::set<std::string> requested_full;  // UI thread
 
   explicit Ui(Config c) : cfg(std::move(c)), views(cfg.views) {
+    for (auto& v : views) sorts.push_back(v.is_list() ? Sort::List : Sort::Updated);
     live.resize(cfg.plugins.size());
     pending.resize(cfg.plugins.size());
     running.assign(cfg.plugins.size(), true);
@@ -329,7 +331,18 @@ struct Ui {
                                     local_match(c->second, *preds, viewer))
           out.push_back(c->second);
     }
-    sort_prs(out, sort);
+    if (sorts[vi] == Sort::List && !out.empty()) {  // non-empty: the plugin exists
+      // Plugin order first; PRs it gave no order go last, newest update first.
+      sort_prs(out, Sort::Updated);
+      const auto& prs = live[static_cast<size_t>(plugin_index(v.plugin))].prs;
+      auto key = [&](const Pr& p) {
+        auto it = prs.find(p.url);
+        return it != prs.end() && it->second.order ? *it->second.order : -HUGE_VAL;
+      };
+      std::stable_sort(out.begin(), out.end(), [&](const Pr& a, const Pr& b) { return key(a) > key(b); });
+    } else {
+      sort_prs(out, sorts[vi]);
+    }
     return out;
   }
 
@@ -465,7 +478,7 @@ struct Ui {
 
   Element render_footer() {
     Elements f = {text(" r refresh  / query  o org  p repo  x clear  s sort:" +
-                       std::string(sort_name(sort)) + "  ⏎ open  y copy  ? help  q quit") |
+                       std::string(sort_name(sorts[active])) + "  ⏎ open  y copy  ? help  q quit") |
                   dim};
     f.push_back(filler());
     for (size_t i = 0; i < cfg.plugins.size(); ++i) {
@@ -683,7 +696,10 @@ struct Ui {
       selected = 0;
       refresh();
     } else if (e == Event::Character('s')) {
-      sort = static_cast<Sort>((static_cast<int>(sort) + 1) % 4);
+      // List only exists for list views.
+      Sort& s = sorts[active];
+      do s = static_cast<Sort>((static_cast<int>(s) + 1) % 5);
+      while (s == Sort::List && !views[active].is_list());
     } else if (e == Event::Tab) {
       switch_view((active + 1) % views.size());
     } else if (e == Event::TabReverse) {

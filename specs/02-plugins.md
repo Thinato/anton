@@ -67,6 +67,7 @@ shown in the `?` overlay for debugging.
 | --- | --- |
 | `pr` | PR URL. Normalized: scheme/host lowercased, trailing `/`, `/files`, `#…`, `?…` stripped. `owner/repo#123` also accepted. |
 | `lists` | names of this plugin's lists the PR is on. |
+| `order` | optional number; a list view shows higher first by default (e.g. a post time, so the newest is on top). |
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
 

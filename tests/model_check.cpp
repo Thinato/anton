@@ -97,6 +97,9 @@ int main() {
   assert(st.prs[url].lists.count("code-review"));
   assert(st.prs[url].status->text == "queued");
   assert(st.prs[url].tags.size() == 1);
+  assert(!st.prs[url].order);
+  apply_line(st, R"({"pr":"o/r#1","lists":["code-review"],"order":1700000000.5})");
+  assert(st.prs[url].order == 1700000000.5);
   apply_line(st, R"({"pr":"https://github.com/o/r/pull/1","lists":["code-review"]})");
   assert(!st.prs[url].status && st.prs[url].tags.empty());  // omitted = none
   apply_line(st, R"({"health":"error","text":"expired"})");

@@ -308,6 +308,7 @@ struct PrInfo {
   std::set<std::string> lists;
   std::optional<Status> status;
   std::vector<Tag> tags;
+  std::optional<double> order;  // list views' default sort: higher first
 };
 
 struct PluginState {
@@ -350,6 +351,7 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
     for (auto& t : *it)
       if (t.is_object() && !str(t, "text").empty())
         info.tags.push_back({str(t, "glyph"), str(t, "text"), str(t, "hint")});
+  if (auto it = j.find("order"); it != j.end() && it->is_number()) info.order = it->get<double>();
   if (info.lists.empty() && !info.status && info.tags.empty())
     st.prs.erase(url);  // {"pr": url} alone: the plugin has nothing to say about it
   else
@@ -359,10 +361,12 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
 
 // -- sorting -----------------------------------------------------------------
 
-enum class Sort { Updated, Created, Size, Repo };
+// List: the plugin's `order` (list views only; their default).
+enum class Sort { List, Updated, Created, Size, Repo };
 
 inline const char* sort_name(Sort s) {
   switch (s) {
+    case Sort::List: return "list";
     case Sort::Updated: return "updated";
     case Sort::Created: return "created";
     case Sort::Size: return "size";
@@ -374,6 +378,7 @@ inline const char* sort_name(Sort s) {
 inline void sort_prs(std::vector<Pr>& v, Sort s) {
   std::stable_sort(v.begin(), v.end(), [s](const Pr& a, const Pr& b) {
     switch (s) {
+      case Sort::List: return false;  // keeps the order rows() built
       case Sort::Updated: return a.updated > b.updated;
       case Sort::Created: return a.created > b.created;
       case Sort::Size: return a.additions + a.deletions > b.additions + b.deletions;
