@@ -15,7 +15,13 @@ Named after the critic in *Ratatouille*.
 
 ## Install
 
-You need `gh` (logged in), CMake 3.20+ and a C++20 compiler. macOS and Linux.
+You need `gh`, logged in. Prebuilt `anton` and `anton-slkx` for macOS (Apple
+silicon) and Linux (x86_64) are on the
+[releases page](https://github.com/Thinato/anton/releases). On macOS, a
+browser download needs `xattr -d com.apple.quarantine anton anton-slkx` before
+the first run, because the binaries aren't signed.
+
+To build from source you need CMake 3.20+ and a C++20 compiler:
 
 ```sh
 git clone https://github.com/Thinato/anton && cd anton
@@ -129,6 +135,10 @@ The specs in [specs/](specs/) describe what anton does and why. Change the
 spec when you change the behavior. The logic that matters (state ranking,
 filters, the Slack event fold) is kept in pure headers, `src/model.hpp` and
 `plugins/slkx/fold.hpp`, checked by the asserts in `tests/`.
+
+Work goes through pull requests; CI builds and tests each one on macOS and
+Linux. To release, bump `VERSION` in `CMakeLists.txt` in a PR: merging it
+publishes `v<VERSION>` with binaries attached.
 
 `docs/demo/run.sh` runs anton on made-up PRs with a fake `gh` and a fake Slack
 plugin. The screenshot comes from it.
