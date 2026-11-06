@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake gh for the demo: answers from demo.py, never the network.
+exec python3 "$(dirname "$0")/demo.py" gh "$@"

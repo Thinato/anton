@@ -1,0 +1,25 @@
+{
+  "size": { "green_below": 450, "red_from": 1000 },
+  "title_strip": "^\\[[A-Z]+-\\d+\\]\\s*",
+  "people": {
+    "mona-lisa":  { "name": "mona",  "hex": "#c98652", "ansi": 173 },
+    "dkowalski":  { "name": "dana",  "hex": "#8e602a", "ansi": 94 },
+    "rtanaka":    { "name": "ren",   "hex": "#a2a5d8", "ansi": 146 },
+    "ifernandes": { "name": "ines",  "hex": "#528a6b", "ansi": 65 },
+    "okafor-c":   { "name": "chidi", "hex": "#976be0", "ansi": 98 },
+    "lmartin":    { "name": "lucas", "hex": "#b69547", "ansi": 137 },
+    "shah-a":     { "name": "anika", "hex": "#75444c", "ansi": 95 },
+    "jvolkov":    { "name": "yuri",  "hex": "#644c6a", "ansi": 96 },
+    "paz-o":      { "name": "paz",   "hex": "#5ba3b0", "ansi": 73 }
+  },
+  "views": [
+    { "name": "Created", "query": "is:open author:@me" },
+    { "name": "Review requests", "query": "is:open review-requested:@me" },
+    { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "recent:24h" },
+    { "name": "Assigned", "query": "is:open assignee:@me" },
+    { "name": "Mentioned", "query": "is:open mentions:@me" }
+  ],
+  "plugins": [
+    { "name": "slack", "command": ["python3", "@DIR@/demo.py", "plugin"], "rerun": "exit" }
+  ]
+}
