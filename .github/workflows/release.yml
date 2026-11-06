@@ -22,8 +22,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # The tag first: the binaries carry it, to know when they're out of date.
+  version:
     if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+
+      - id: tag
+        env:
+          # Empty it for stable releases. N keeps counting across the switch.
+          SUFFIX: -beta
+        run: |
+          base=$(sed -nE 's/^project\(anton VERSION ([0-9]+\.[0-9]+)\..*/\1/p' CMakeLists.txt)
+          last=$(git ls-remote --tags --refs origin "refs/tags/v$base.*" \
+            | sed -nE "s|.*refs/tags/v$base\.([0-9]+)(-[a-z]+)?$|\1|p" | sort -n | tail -1)
+          echo "tag=v$base.$(( ${last:--1} + 1 ))$SUFFIX" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
     strategy:
       matrix:
         include:
@@ -42,7 +64,7 @@ jobs:
       # install, and the binaries need only system libraries.
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DANTON_VERSION=${{ needs.version.outputs.tag }}
           cmake --build build -j --target anton anton-slkx
 
       - name: Package
@@ -55,15 +77,11 @@ jobs:
           retention-days: 1
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -73,11 +91,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          # Empty it for stable releases. N keeps counting across the switch.
-          SUFFIX: -beta
-        run: |
-          base=$(sed -nE 's/^project\(anton VERSION ([0-9]+\.[0-9]+)\..*/\1/p' CMakeLists.txt)
-          last=$(git ls-remote --tags --refs origin "refs/tags/v$base.*" \
-            | sed -nE "s|.*refs/tags/v$base\.([0-9]+)(-[a-z]+)?$|\1|p" | sort -n | tail -1)
-          tag="v$base.$(( ${last:--1} + 1 ))$SUFFIX"
-          gh release create "$tag" dist/*.tar.gz --target "$SHA" --title "$tag" --generate-notes
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release create "$TAG" dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$TAG" --generate-notes

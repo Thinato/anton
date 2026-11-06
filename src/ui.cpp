@@ -22,6 +22,7 @@
 #include "model.hpp"
 #include "plugins.hpp"
 #include "proc.hpp"
+#include "update.hpp"
 
 namespace anton {
 namespace {
@@ -62,7 +63,8 @@ struct Ui {
   std::set<std::string> requested;                           // URLs ever asked for
   std::set<std::string> owners, repos;                       // every one seen: picker source
   std::string viewer;
-  std::time_t last_fetch = 0, last_refresh = 0, last_watch = 0;
+  std::time_t last_fetch = 0, last_refresh = 0, last_watch = 0, last_update_check = 0;
+  std::string update_note;  // stays in the footer once set
   std::string error, notice;
   std::time_t notice_until = 0;
   int selected = 0;
@@ -575,6 +577,7 @@ struct Ui {
                        std::string(sort_name(sorts[active])) + "  ⏎ open  y copy  ? help  q quit") |
                   dim};
     f.push_back(filler());
+    if (!update_note.empty()) f.push_back(text("⬆ " + update_note + "  ") | color(Color::Green));
     for (size_t i = 0; i < cfg.plugins.size(); ++i) {
       bool up = plugin_up(i);
       f.push_back(text(cfg.plugins[i].name + (up ? " ● " : " ○ ")) |
@@ -626,6 +629,7 @@ struct Ui {
         text("  q             quit            ?  this help (any key closes)"),
         text(""),
         text("view: " + views[active].name + "   query: " + effective(views[active])) | dim,
+        text(std::string("anton ") + kVersion) | dim,
     };
     if (!cfg.plugins.empty()) {
       l.push_back(text(""));
@@ -652,6 +656,7 @@ struct Ui {
   Element render() {
     if (now() - last_refresh >= cfg.refresh_seconds) refresh();
     if (now() - last_watch >= cfg.watch_seconds) poll_watched();
+    if (update_note.empty() && now() - last_update_check >= 6 * 3600) check_update();
     std::string view_err;
     auto rs = rows(active, &view_err).value_or(std::vector<Pr>{});
     selected = std::clamp(selected, 0, std::max(0, static_cast<int>(rs.size()) - 1));
@@ -677,6 +682,16 @@ struct Ui {
   }
 
   // -- actions ----------------------------------------------------------------
+
+  // At startup and every 6h, until there's something to say. Detached: anton
+  // _Exits on quit, so nothing joins it.
+  void check_update() {
+    last_update_check = now();
+    std::thread([this, install = cfg.auto_update] {
+      std::string note = self_update(install);
+      if (!note.empty()) post([this, note] { update_note = note; });
+    }).detach();
+  }
 
   void flash(const std::string& s, int secs = 3) {
     notice = s;

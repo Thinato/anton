@@ -58,6 +58,7 @@ inline int parse_hex(const std::string& s) {
 struct Config {
   int refresh_seconds = 120;
   int watch_seconds = 15;  // PRs a plugin marks "watch": true
+  bool auto_update = true;  // false: only tell when a release is out
   long green_below = 200, red_from = 1000;
   // "title_strip": a regex cut out of every title shown, e.g. a ticket prefix.
   std::string title_strip;
@@ -88,6 +89,7 @@ inline std::string parse_config(const std::string& text, Config& c) {
   try {
     c.refresh_seconds = std::max(10, j.value("refresh_seconds", c.refresh_seconds));
     c.watch_seconds = std::max(5, j.value("watch_seconds", c.watch_seconds));
+    c.auto_update = j.value("auto_update", c.auto_update);
     c.title_strip = j.value("title_strip", c.title_strip);
     if (!c.title_strip.empty()) {
       try {

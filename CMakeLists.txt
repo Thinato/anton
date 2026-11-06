@@ -45,11 +45,15 @@ add_executable(anton
   src/github.cpp
   src/plugins.cpp
   src/ui.cpp
+  src/update.cpp
 )
 target_include_directories(anton PRIVATE src)
 target_link_libraries(anton PRIVATE nlohmann_json::nlohmann_json
   ftxui::component)
 target_compile_options(anton PRIVATE ${WARN})
+# Release builds pass the tag (release.yml); "dev" never self-updates.
+set(ANTON_VERSION "dev" CACHE STRING "Version baked into anton")
+target_compile_definitions(anton PRIVATE ANTON_VERSION="${ANTON_VERSION}")
 install(TARGETS anton RUNTIME DESTINATION bin)
 
 if(ANTON_SLKX_PLUGIN)

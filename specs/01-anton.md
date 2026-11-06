@@ -219,6 +219,7 @@ Optional; every key has a default.
 {
   "refresh_seconds": 120,
   "watch_seconds": 15,
+  "auto_update": true,
   "size": { "green_below": 450, "red_from": 1000 },
   "title_strip": "^\\[(PRO|ARG)-\\d+\\]\\s*",
   "people": {
@@ -263,6 +264,25 @@ view's `plugin` must name a configured plugin; at most 32 plugins.
 
 Quitting — `q`, Ctrl-C, or SIGTERM/SIGHUP from outside — stops every plugin's
 process group before anton exits.
+
+## Updates
+
+A release build knows its tag (`anton --version`, baked in by
+`.github/workflows/release.yml`); a local build is `dev` and never updates.
+At startup and every 6 hours, anton asks `gh api repos/Thinato/anton/releases/latest`.
+If that tag is newer (by number: `v0.1.12-beta` > `v0.1.9-beta`; the suffix
+doesn't count), it downloads the tarball for this platform with
+`gh release download`, unpacks it next to the running binary and `rename()`s
+`anton` (whatever it's called) and `anton-slkx` (only if it's already there)
+over the old ones. The running process keeps its old file; the footer says
+`⬆ updated to vX, restart anton to use it` until quit. Nothing is restarted
+behind your back: plugins keep running the old `anton-slkx` until anton
+restarts.
+
+- `"auto_update": false` in the config: only `⬆ anton vX is out`.
+- Can't write the install directory (e.g. a root-owned `/usr/local/bin`):
+  same, plus why.
+- Offline, rate-limited, a platform without prebuilt binaries: silent.
 
 ## Build & stack
 

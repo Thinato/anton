@@ -4,6 +4,7 @@
 
 #include "config.hpp"
 #include "model.hpp"
+#include "update.hpp"
 
 using namespace anton;
 
@@ -163,6 +164,13 @@ int main() {
     Config bad;
     assert(!parse_config(R"({"people": {"x": {"hex": "red"}}})", bad).empty());
     assert(!parse_config(R"({"people": {"x": {"ansi": "pink"}}})", bad).empty());
+  }
+
+  {  // self-update ordering: numbers only, suffix ignored; dev never updates
+    assert(newer("v0.1.2-beta", "v0.1.1-beta") && newer("v0.1.10-beta", "v0.1.9-beta"));
+    assert(newer("v0.2.0-beta", "v0.1.9") && newer("v0.1.5", "v0.1.4-beta"));
+    assert(!newer("v0.1.1-beta", "v0.1.1-beta") && !newer("v0.1.0-beta", "v0.1.1-beta"));
+    assert(!newer("v0.1.2-beta", "dev") && !newer("", "v0.1.0") && std::string(kVersion) == "dev");
   }
 
   std::puts("model_check: all checks passed");
