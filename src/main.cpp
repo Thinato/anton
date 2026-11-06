@@ -7,12 +7,14 @@
 #include "config.hpp"
 #include "proc.hpp"
 #include "ui.hpp"
+#include "update.hpp"
 
 static const char* kUsage =
-    "usage: anton [--query '<github search>'] [--no-plugins]\n"
+    "usage: anton [--query '<github search>'] [--no-plugins] [--version]\n"
     "\n"
     "  --query Q      open a single ad-hoc view instead of the configured ones\n"
     "  --no-plugins   start without plugins\n"
+    "  --version      print the version\n"
     "\n"
     "config: $XDG_CONFIG_HOME/anton/config.json (default ~/.config/anton/config.json)\n";
 
@@ -30,6 +32,9 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "-h" || a == "--help") {
       std::fputs(kUsage, stdout);
+      return 0;
+    } else if (a == "--version") {
+      std::puts(anton::kVersion);
       return 0;
     } else if (a == "--no-plugins") {
       cfg.plugins.clear();

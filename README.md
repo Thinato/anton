@@ -24,7 +24,9 @@ curl --proto '=https' --tlsv1.2 -sSf \
 
 It puts `anton` and `anton-slkx` in `~/.local/bin` (override with
 `ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
-`ANTON_VERSION=v0.1.0-beta`). anton needs [`gh`](https://cli.github.com),
+`ANTON_VERSION=v0.1.0-beta`). After that, anton updates itself: when a release
+is out it swaps in the new binaries and asks you to restart
+(`"auto_update": false` in the config to only be told). anton needs [`gh`](https://cli.github.com),
 logged in; the Slack plugin also needs [slkx](https://github.com/Thinato/slkx).
 
 To build from source you need CMake 3.20+ and a C++20 compiler:
