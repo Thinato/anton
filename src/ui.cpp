@@ -63,7 +63,7 @@ struct Ui {
   std::string viewer;
   std::time_t last_fetch = 0, last_refresh = 0;
   std::string error, notice;
-  std::time_t notice_at = 0;
+  std::time_t notice_until = 0;
   int selected = 0;
   Mode mode = Mode::Normal;
   std::string query_buf, pick_buf;
@@ -250,6 +250,7 @@ struct Ui {
   void on_plugin_line(size_t i, const std::string& line, bool is_err) {
     if (is_err) {
       live[i].last_stderr = line;
+      flash(cfg.plugins[i].name + ": " + line, 10);  // e.g. a bad setting
       return;
     }
     if (!running[i]) {  // first line after a restart: forget "exited"
@@ -496,7 +497,7 @@ struct Ui {
   }
 
   Element render_message(const std::string& view_err) {
-    if (now() - notice_at < 3 && !notice.empty()) return text(" " + notice) | color(Color::Cyan);
+    if (now() < notice_until && !notice.empty()) return text(" " + notice) | color(Color::Cyan);
     std::string e = !view_err.empty() ? view_err : error;
     if (!e.empty()) return text(" " + e) | color(Color::Red);
     return text("");
@@ -581,9 +582,9 @@ struct Ui {
 
   // -- actions ----------------------------------------------------------------
 
-  void flash(const std::string& s) {
+  void flash(const std::string& s, int secs = 3) {
     notice = s;
-    notice_at = now();
+    notice_until = now() + secs;
   }
 
   void switch_view(size_t i) {

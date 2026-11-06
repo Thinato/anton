@@ -51,7 +51,8 @@ In `~/.config/anton/config.json`:
 ## Protocol: plugin → anton (stdout)
 
 One JSON object per line, UTF-8, `\n`-terminated. Lines that fail to parse are
-ignored and counted (shown in `?`). stderr is not protocol; its last line is
+ignored and counted (shown in `?`). stderr is not protocol: each line flashes in
+the message line for 10s (warnings like a bad setting), and the last line is
 shown in the `?` overlay for debugging.
 
 ### `pr` — everything this plugin says about one PR

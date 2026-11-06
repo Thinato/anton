@@ -88,7 +88,18 @@ static int run_plugin(int argc, char** argv) {
     else if (a == "--deploy-channel") deploy = val();
     else if (a == "--review-emoji") c.review_emoji = split(val());
     else if (a == "--deploy-clear-emoji") c.clear_emoji = split(val());
-    else if (a == "--backfill") backfill = std::clamp(std::atol(val().c_str()), 1L, 1000L);
+    else if (a == "--backfill") {
+      // A bad value is a warning, not a failure: the plugin still runs.
+      std::string v = val();
+      size_t nz = v.find_first_not_of('0');
+      if (!all_digits(v) || nz == std::string::npos) {
+        std::fprintf(stderr, "anton-slkx: --backfill %s is not a positive number, using 1000\n", v.c_str());
+      } else if (v.size() - nz > 4 || std::stol(v.substr(nz)) > 1000) {
+        std::fprintf(stderr, "anton-slkx: --backfill %s is over Slack's limit, using 1000\n", v.c_str());
+      } else {
+        backfill = std::stol(v.substr(nz));
+      }
+    }
     else if (a == "--slkx") slkx_bin = val();
     else if (a == "--deploy-state") {
       std::string v = val();
