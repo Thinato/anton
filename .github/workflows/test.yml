@@ -1,0 +1,56 @@
+name: test
+
+# Builds and runs the self-checks on every PR; required to merge. Linux only:
+# the checks are pure logic, and the macOS build is exercised by release.yml.
+#
+# No `paths:` filter on the trigger. A workflow skipped that way never reports,
+# so a required check would block a docs-only PR forever. Instead the workflow
+# always starts and `build-and-test` is skipped when no code changed -- a
+# skipped job counts as passing for required checks.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# A new push to the PR makes the previous run pointless.
+concurrency:
+  group: test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh pr diff ${{ github.event.pull_request.number }} \
+            --repo "$GITHUB_REPOSITORY" --name-only)
+          if printf '%s\n' "$files" \
+              | grep -qE '^(src/|plugins/|tests/|CMakeLists\.txt$|\.github/workflows/)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-22.04  # same image as the release build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Self-checks
+        run: ctest --test-dir build --output-on-failure
