@@ -173,5 +173,18 @@ int main() {
     assert(!newer("v0.1.2-beta", "dev") && !newer("", "v0.1.0") && std::string(kVersion) == "dev");
   }
 
+  {  // $HOME in plugin commands: a shareable config
+    setenv("HOME", "/home/x", 1);
+    assert(expand_home("$HOME/.local/bin/anton-slkx") == "/home/x/.local/bin/anton-slkx");
+    assert(expand_home("${HOME}/a:$HOME/b") == "/home/x/a:/home/x/b");
+    assert(expand_home("~/bin/p") == "/home/x/bin/p" && expand_home("~") == "/home/x");
+    assert(expand_home("a~b") == "a~b" && expand_home("#code-review") == "#code-review");
+    Config c;
+    assert(parse_config(R"({"plugins": [{"name": "s", "command": ["$HOME/p", "--x", "~/y"]}]})", c).empty());
+    assert(c.plugins[0].command == (std::vector<std::string>{"/home/x/p", "--x", "/home/x/y"}));
+    setenv("HOME", "$HOME", 1);  // a HOME that contains the variable must not loop
+    assert(expand_home("$HOME/a") == "$HOME/a");
+  }
+
   std::puts("model_check: all checks passed");
 }

@@ -2,6 +2,7 @@
 // ~/.config/anton/config.json -> Config. Every key is optional.
 
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <regex>
@@ -53,6 +54,18 @@ inline int parse_hex(const std::string& s) {
   for (size_t i = 1; i < 7; ++i)
     if (!std::isxdigit(static_cast<unsigned char>(s[i]))) return -1;
   return static_cast<int>(std::strtol(s.c_str() + 1, nullptr, 16));
+}
+
+// "$HOME", "${HOME}" and a leading "~" in a plugin command, so a config can
+// be shared: there's no shell to expand them (02-plugins.md).
+inline std::string expand_home(std::string s) {
+  const char* h = std::getenv("HOME");
+  if (!h || !*h) return s;
+  if (s == "~" || s.rfind("~/", 0) == 0) s.replace(0, 1, h);
+  for (const char* var : {"${HOME}", "$HOME"})
+    for (size_t at = s.find(var); at != std::string::npos; at = s.find(var, at + std::strlen(h)))
+      s.replace(at, std::strlen(var), h);
+  return s;
 }
 
 struct Config {
@@ -127,6 +140,7 @@ inline std::string parse_config(const std::string& text, Config& c) {
       PluginConfig pc;
       pc.name = p.at("name").get<std::string>();
       pc.command = p.at("command").get<std::vector<std::string>>();
+      for (auto& a : pc.command) a = expand_home(a);
       pc.rerun = p.value("rerun", pc.rerun);
       pc.env = p.value("env", pc.env);
       if (pc.command.empty()) return "plugin \"" + pc.name + "\": empty command";

@@ -44,7 +44,7 @@ In `~/.config/anton/config.json`:
 | key | default | |
 | --- | --- | --- |
 | `name` | required | referenced by list views; shown in errors and the `?` overlay |
-| `command` | required | argv, run without a shell, cwd = anton's cwd |
+| `command` | required | argv, run without a shell, cwd = anton's cwd. `$HOME`, `${HOME}` and a leading `~` are expanded (only these: there's no shell), so `"$HOME/.local/bin/anton-slkx"` works in a config shared between people |
 | `rerun` | `"exit"` | `"exit"`: restart 5s after it exits (doubling to 5 min on repeated quick exits). `"refresh"`: run once per anton refresh. `"never"`: run once. |
 | `env` | `{}` | extra environment variables |
 
