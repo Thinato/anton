@@ -1,0 +1,4 @@
+build/
+.omc/
+build.log
+compile_commands.json
