@@ -48,6 +48,7 @@ int main() {
   json l = f.line(PR1);
   assert(l["lists"] == json({"code-review"}));
   assert((handles(l) == std::vector<std::string>{"alice", "you"}));
+  assert(l["watch"] == true);  // you're reviewing it
   assert(!l.contains("status"));
   assert(l["order"] == 1700000000.0001);
 
@@ -153,6 +154,7 @@ int main() {
     assert(a[1].remove && a[2].remove);
     for (auto& r : a) g.event(g.as_event(r));
     assert((handles(g.line(P)) == std::vector<std::string>{"alice"}));
+    assert(!g.line(P).contains("watch"));  // not yours to review any more
     assert(g.approved(P).empty());  // done: a repeated event is a no-op
 
     // a shared "stack" post is not one PR's to change on approval

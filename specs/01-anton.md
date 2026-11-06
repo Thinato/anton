@@ -196,6 +196,14 @@ Refresh: on start, on `r`, on view/filter change, and every
 `↻ loading…` and the old rows stay until the new ones arrive. A failed refresh
 keeps the old rows and shows the `gh` stderr line in the footer.
 
+Watched PRs: open PRs a plugin marks `"watch": true` (anton-slkx: the ones
+you're reviewing) are re-fetched every `watch_seconds` (default 15, min 5) in
+one quiet request, so an approval shows up (and turns into 👍) within seconds.
+Live webhooks (`gh webhook forward`) were considered and rejected: they need
+repo/org admin, allow one forwarder per org, and are documented testing-only.
+Later: a relay (an org webhook into a small AWS service exposing a socket)
+could feed a plugin that tells anton to re-fetch a PR the moment it changes.
+
 ## Configuration
 
 `$XDG_CONFIG_HOME/anton/config.json` (default `~/.config/anton/config.json`).
@@ -204,6 +212,7 @@ Optional; every key has a default.
 ```json
 {
   "refresh_seconds": 120,
+  "watch_seconds": 15,
   "size": { "green_below": 450, "red_from": 1000 },
   "views": [
     { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "is:open" },

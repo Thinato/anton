@@ -69,6 +69,7 @@ shown in the `?` overlay for debugging.
 | `pr` | PR URL. Normalized: scheme/host lowercased, trailing `/`, `/files`, `#…`, `?…` stripped. `owner/repo#123` also accepted. |
 | `lists` | names of this plugin's lists the PR is on. |
 | `order` | optional number; a list view shows higher first by default (e.g. a post time, so the newest is on top). |
+| `watch` | optional `true`: anton re-fetches this PR every `watch_seconds` (15) while it's open, e.g. one you're reviewing. Keep it to a handful. |
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
 

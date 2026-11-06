@@ -61,7 +61,7 @@ struct Ui {
   std::set<std::string> requested;                           // URLs ever asked for
   std::set<std::string> owners, repos;                       // every one seen: picker source
   std::string viewer;
-  std::time_t last_fetch = 0, last_refresh = 0;
+  std::time_t last_fetch = 0, last_refresh = 0, last_watch = 0;
   std::string error, notice;
   std::time_t notice_until = 0;
   int selected = 0;
@@ -147,6 +147,20 @@ struct Ui {
       requested_full.insert(u);
     }
     busy = true;
+    cv.notify_one();
+  }
+
+  // Watched PRs that are still open: one quiet full fetch, no "loading…".
+  void poll_watched() {
+    std::vector<std::string> urls;
+    for (size_t i = 0; i < live.size(); ++i)
+      for (auto& [url, info] : live[i].prs)
+        if (auto c = cache.find(url); info.watch && c != cache.end() && c->second.state == "OPEN")
+          urls.push_back(url);
+    last_watch = now();
+    if (urls.empty()) return;
+    std::lock_guard lk(mu);
+    want_full.insert(urls.begin(), urls.end());
     cv.notify_one();
   }
 
@@ -596,6 +610,7 @@ struct Ui {
 
   Element render() {
     if (now() - last_refresh >= cfg.refresh_seconds) refresh();
+    if (now() - last_watch >= cfg.watch_seconds) poll_watched();
     std::string view_err;
     auto rs = rows(active, &view_err).value_or(std::vector<Pr>{});
     selected = std::clamp(selected, 0, std::max(0, static_cast<int>(rs.size()) - 1));

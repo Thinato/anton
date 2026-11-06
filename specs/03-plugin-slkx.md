@@ -90,7 +90,8 @@ read does not return other replies.
 - Reviewers = users with a review emoji on **any** message naming that PR
   (union — the same PR is often reposted). Tag per reviewer, sorted:
   `{"glyph": "👀", "text": "<handle>", "hint": "reviewing, via Slack"}`.
-  Your own reaction renders as `you`.
+  Your own reaction renders as `you`, and marks the PR `"watch": true` so
+  anton polls it and your approval is noticed within ~15s.
 - A deleted message, or an edit that removes the URL, takes that message out.
   The PR leaves the list when **no** message naming it remains — if it was
   posted twice and one post is deleted, it stays.

@@ -163,6 +163,8 @@ class Fold {
           if (emoji == step.emoji) st = &step;  // later steps overwrite: furthest wins
       j["status"] = {{"glyph", st->glyph}, {"text", st->text}};
     }
+    // You're reviewing it: anton polls it, so your approval turns into 👍 fast.
+    if (!c_.me.empty() && reviewers.count(c_.me)) j["watch"] = true;
     std::vector<std::string> handles;
     for (auto& u : reviewers) handles.push_back(u == c_.me ? "you" : name(u));
     std::sort(handles.begin(), handles.end());

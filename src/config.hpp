@@ -21,6 +21,7 @@ struct View {
 
 struct Config {
   int refresh_seconds = 120;
+  int watch_seconds = 15;  // PRs a plugin marks "watch": true
   long green_below = 200, red_from = 1000;
   // Mirrors GitHub's own pull-requests page; the first is the landing view.
   std::vector<View> views = {
@@ -46,6 +47,7 @@ inline std::string parse_config(const std::string& text, Config& c) {
   if (j.is_discarded() || !j.is_object()) return "not a JSON object";
   try {
     c.refresh_seconds = std::max(10, j.value("refresh_seconds", c.refresh_seconds));
+    c.watch_seconds = std::max(5, j.value("watch_seconds", c.watch_seconds));
     if (j.contains("size")) {
       c.green_below = j["size"].value("green_below", c.green_below);
       c.red_from = j["size"].value("red_from", c.red_from);
