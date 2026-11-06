@@ -15,11 +15,17 @@ Named after the critic in *Ratatouille*.
 
 ## Install
 
-You need `gh`, logged in. Prebuilt `anton` and `anton-slkx` for macOS (Apple
-silicon) and Linux (x86_64) are on the
-[releases page](https://github.com/Thinato/anton/releases). On macOS, a
-browser download needs `xattr -d com.apple.quarantine anton anton-slkx` before
-the first run, because the binaries aren't signed.
+Prebuilt for macOS (Apple silicon) and Linux (x86_64):
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf \
+  https://raw.githubusercontent.com/Thinato/anton/main/install.sh | sh
+```
+
+It puts `anton` and `anton-slkx` in `~/.local/bin` (override with
+`ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
+`ANTON_VERSION=v0.1.0-beta`). anton needs [`gh`](https://cli.github.com),
+logged in; the Slack plugin also needs [slkx](https://github.com/Thinato/slkx).
 
 To build from source you need CMake 3.20+ and a C++20 compiler:
 
