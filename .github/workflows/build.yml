@@ -1,4 +1,4 @@
-# Every PR: build and test on Linux and macOS.
+# Every PR: release binaries for Linux and macOS (tests: test.yml).
 # Every merge to main: the same, then a release if VERSION in CMakeLists.txt
 # has no release yet. Releasing = bumping that version in a PR.
 name: build
@@ -22,7 +22,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --parallel
-      - run: ctest --test-dir build --output-on-failure
       - run: tar -czf anton-${{ matrix.target }}.tar.gz -C build anton anton-slkx
       - uses: actions/upload-artifact@v4
         with:
