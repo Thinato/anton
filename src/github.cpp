@@ -11,7 +11,7 @@ using nlohmann::json;
 
 static const char* kFields = R"(
 fragment F on PullRequest {
-  number title url isDraft state createdAt updatedAt additions deletions reviewDecision
+  number title url isDraft state createdAt updatedAt closedAt additions deletions reviewDecision mergeable
   repository { nameWithOwner owner { login } }
   author { login }
   latestReviews(first: 20) { nodes { author { login } state submittedAt } }
@@ -69,6 +69,8 @@ static Pr to_pr(const json& n, const std::string& viewer) {
   pr.review_decision = sget(n, "reviewDecision");
   pr.created = parse_time(sget(n, "createdAt"));
   pr.updated = parse_time(sget(n, "updatedAt"));
+  pr.closed = parse_time(sget(n, "closedAt"));
+  pr.mergeable = sget(n, "mergeable");
   pr.repo = sget(at(n, "/repository"), "nameWithOwner");
   pr.owner = sget(at(n, "/repository/owner"), "login");
   pr.author = sget(at(n, "/author"), "login");
@@ -166,7 +168,7 @@ Fetch fetch_states(const std::vector<std::string>& urls) {
   Fetch f;
   std::mutex mu;
   parallel_chunks(urls.size(), 100, [&](size_t a, size_t b) {
-    std::string body = aliases(urls, a, b, "state");
+    std::string body = aliases(urls, a, b, "state closedAt");
     if (body.empty()) return;
     std::string err;
     json d = graphql({"-f", "query=query {" + body + " }"}, err);
@@ -184,6 +186,7 @@ Fetch fetch_states(const std::vector<std::string>& urls) {
       pr.repo = ref->owner + "/" + ref->name;
       pr.number = ref->number;
       pr.state = sget(n, "state");
+      pr.closed = parse_time(sget(n, "closedAt"));
       pr.partial = true;
       f.prs.push_back(pr);
     }

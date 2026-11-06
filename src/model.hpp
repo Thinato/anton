@@ -32,8 +32,9 @@ struct Pr {
   std::string my_review_at;       // ...and when it was submitted
   bool draft = false;
   long additions = 0, deletions = 0;
-  std::time_t created = 0, updated = 0;
-  bool partial = false;  // only url/repo/number/state known (see fetch_states)
+  std::string mergeable;           // MERGEABLE | CONFLICTING | UNKNOWN (GitHub computes it lazily)
+  std::time_t created = 0, updated = 0, closed = 0;  // closed: also set when merged
+  bool partial = false;  // only url/repo/number/state/closed known (see fetch_states)
 };
 
 struct Tag {
@@ -88,7 +89,7 @@ inline std::time_t parse_time(const std::string& iso) {
 
 // -- state -------------------------------------------------------------------
 
-enum class Kind { Done, Custom, Draft, Failing, Changes, Approved, Mine, Review };
+enum class Kind { Merged, Done, Conflict, Custom, Draft, Failing, Changes, Approved, Mine, Review };
 
 struct Shown {
   Kind kind;
@@ -98,8 +99,10 @@ struct Shown {
 // The STATE column. Order is the spec's: merged/closed, plugin status, then
 // GitHub's own signals.
 inline Shown derive_state(const Pr& pr, const std::optional<Status>& custom) {
-  if (pr.state == "MERGED") return {Kind::Done, "merged"};
+  if (pr.state == "MERGED") return {Kind::Merged, "merged"};
   if (pr.state == "CLOSED") return {Kind::Done, "closed"};
+  // Above a plugin status: a queued PR with a conflict can't be merged.
+  if (pr.mergeable == "CONFLICTING") return {Kind::Conflict, "⚠ conflict"};
   if (custom) {
     std::string t = custom->glyph.empty() ? custom->text : custom->glyph + " " + custom->text;
     return {Kind::Custom, t};
@@ -238,10 +241,17 @@ struct Pred {
   bool neg = false;
 };
 
+// "24h" / "2d" -> seconds; 0 if malformed.
+inline long duration_secs(const std::string& v) {
+  if (v.size() < 2 || v.size() > 5 || !all_digits(v.substr(0, v.size() - 1))) return 0;
+  long n = std::stol(v.substr(0, v.size() - 1));
+  return v.back() == 'h' ? n * 3600 : v.back() == 'd' ? n * 86400 : 0;
+}
+
 // Parses the subset a list view can answer from fetched fields. Returns
 // nullopt and sets err for anything else, so it is never a silent no-op.
 inline std::optional<std::vector<Pred>> parse_local(const std::string& q, std::string& err) {
-  static const std::set<std::string> keys = {"is", "org", "user", "repo", "author", "review"};
+  static const std::set<std::string> keys = {"is", "org", "user", "repo", "author", "review", "recent"};
   std::vector<Pred> out;
   for (auto t : tokenize(q)) {
     Pred p;
@@ -265,6 +275,10 @@ inline std::optional<std::vector<Pred>> parse_local(const std::string& q, std::s
       err = "list views don't support is:" + p.value;
       return std::nullopt;
     }
+    if (p.key == "recent" && duration_secs(p.value) <= 0) {
+      err = "recent: takes hours or days, like recent:24h or recent:2d";
+      return std::nullopt;
+    }
     if (p.key == "review" && p.value != "approved" && p.value != "changes_requested" &&
         p.value != "required" && p.value != "none") {
       err = "review: takes approved, changes_requested, required or none";
@@ -285,6 +299,8 @@ inline bool local_match(const Pr& pr, const std::vector<Pred>& preds, const std:
       else if (v == "merged") hit = pr.state == "MERGED";
       else if (v == "draft") hit = pr.draft;
       else hit = true;  // is:pr
+    } else if (p.key == "recent") {  // open, or closed/merged within the window
+      hit = pr.state == "OPEN" || (pr.closed > 0 && std::time(nullptr) - pr.closed <= duration_secs(v));
     } else if (p.key == "org" || p.key == "user") {
       hit = lower(pr.owner) == v;
     } else if (p.key == "repo") {

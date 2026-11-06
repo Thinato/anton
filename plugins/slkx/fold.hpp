@@ -35,6 +35,9 @@ struct FoldConfig {
   std::set<std::string> review_emoji = {"eyes", "zoiando"};
   std::string review_add = "eyes";  // what `v` puts on: the first --review-emoji
   std::set<std::string> clear_emoji = {"p2r2-rejected-pr"};
+  // p2r2 merged it: anton re-fetches the PR so GitHub's purple `merged` shows
+  // within seconds. GitHub stays the source of truth for "merged".
+  std::string merged_emoji = "p2r2-pr-merged";
   Step posted = {"", "⚙", "queued"};  // a deploy post with no step reaction yet
   std::vector<Step> steps = {         // in pipeline order: the furthest present wins
       {"p2r2-picked-up-your-pr", "⚙", "queued"},
@@ -162,6 +165,8 @@ class Fold {
         for (auto& [emoji, user] : deploy->reacts)
           if (emoji == step.emoji) st = &step;  // later steps overwrite: furthest wins
       j["status"] = {{"glyph", st->glyph}, {"text", st->text}};
+      for (auto& [emoji, user] : deploy->reacts)
+        if (emoji == c_.merged_emoji) j["watch"] = true;
     }
     // You're reviewing it: anton polls it, so your approval turns into 👍 fast.
     if (!c_.me.empty() && reviewers.count(c_.me)) j["watch"] = true;

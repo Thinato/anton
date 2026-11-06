@@ -113,8 +113,9 @@ works: the Slack plugin maintains a `code-review` list (see
 A list view's `query` is applied **locally** to the fetched PRs, and supports
 the qualifiers that can be answered from the fetched fields:
 `is:open|closed|merged`, `is:draft`, `-is:draft`, `org:`, `user:`, `repo:`,
-`author:` (with `@me`), `review:approved|changes_requested|required`, and
-`-` negation of each. Anything else is an error shown in the footer, not a
+`author:` (with `@me`), `review:approved|changes_requested|required`,
+`recent:<N>h|<N>d` (open, or closed/merged within that window: keeps a merge
+on screen for a while, e.g. `recent:24h`), and `-` negation of each. Anything else is an error shown in the footer, not a
 silent no-op. Full GitHub syntax remains available in search views.
 
 The org/repo filter applies to the active view and is kept when switching
@@ -140,19 +141,24 @@ kinds, since `org:` and `repo:` are in the local subset.
   by `additions + deletions`: green below `size.green_below` (default 200),
   red from `size.red_from` (default 1000), yellow in between.
 - **STATE**: first match wins:
-  1. `merged` / `closed` — only visible in views whose query allows them
-  2. **custom status from a plugin** — e.g. `⚙ queued` or `💬 Ready?` from the Slack plugin's
+  1. `merged` (purple) / `closed` (dim) — only visible in views whose query
+     allows them (`recent:24h`, `is:merged`, ...)
+  2. `⚠ conflict` (red) — `mergeable == CONFLICTING`. Above plugin statuses: a
+     queued PR with a conflict can't be merged, so that's what needs action.
+     GitHub computes `mergeable` lazily: right after a push it may be UNKNOWN
+     for one fetch.
+  3. **custom status from a plugin** — e.g. `⚙ queued` or `💬 Ready?` from the Slack plugin's
      `#deploy-gogogo` rule. If several plugins set one, config order wins.
      Opt-in by nature: no plugin configured, no custom status.
-  3. `draft` — `isDraft`
-  4. `✗ checks` — rollup `FAILURE` or `ERROR`
-  5. `changes` — `reviewDecision == CHANGES_REQUESTED`
-  6. `approved ✓` — `reviewDecision == APPROVED`
-  7. `you ✓` / `you ✎` — your own latest review is APPROVED / CHANGES_REQUESTED
+  4. `draft` — `isDraft`
+  5. `✗ checks` — rollup `FAILURE` or `ERROR`
+  6. `changes` — `reviewDecision == CHANGES_REQUESTED`
+  7. `approved ✓` — `reviewDecision == APPROVED`
+  8. `you ✓` / `you ✎` — your own latest review is APPROVED / CHANGES_REQUESTED
      but the overall decision is still pending
-  8. `review` — anything else
+  9. `review` — anything else
 
-  A custom status sits below merged/closed so a stale plugin can never make a
+  A custom status sits below merged/closed/conflict so a stale plugin can never make a
   finished PR look in-flight, and above everything else because it is the more
   specific fact (a queued PR is also approved; "queued" is what you want to see).
 - **AGE**: since `createdAt`: `5m`, `5h`, `2d`, `3w`, `4mo`, `1y`.
@@ -214,6 +220,10 @@ Optional; every key has a default.
   "refresh_seconds": 120,
   "watch_seconds": 15,
   "size": { "green_below": 450, "red_from": 1000 },
+  "title_strip": "^\\[(PRO|ARG)-\\d+\\]\\s*",
+  "people": {
+    "VictorOda": { "name": "victor", "hex": "#e5534b", "ansi": "red" }
+  },
   "views": [
     { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "is:open" },
     { "name": "Created",     "query": "is:open author:@me" }
@@ -226,6 +236,20 @@ Optional; every key has a default.
   ]
 }
 ```
+
+`title_strip` (default off) is a regex (ECMAScript) removed from every title
+as displayed, e.g. a Linear ticket prefix `[PRO-123] `. Display only: searches
+and filters still see the full title. A bad regex is a config error.
+
+`people` (default empty) maps a GitHub login (any case) to how you want to
+see them. `name` replaces the login in the AUTHOR column; set it to their
+Slack name and plugin tags with that text (`👀 victor`) get the same color, so
+one person reads the same everywhere. Your own `you` tag uses your login's
+entry. Colors: `hex` (`"#rrggbb"`) on truecolor terminals (`COLORTERM=truecolor`);
+`ansi` (`"red"`, `"bright_red"`, `"gray"`, or 0-255) on the others. Give both
+to choose each look; with only `hex`, older terminals get the nearest palette
+color; with only `ansi`, every terminal uses it. A bad value is a config error.
+Display only: `author:` filters still take the login.
 
 `views`, when present, replaces the defaults entirely, so the order you write
 is the tab order and the first is the landing view. The example above is the

@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 
+#include "config.hpp"
 #include "model.hpp"
 
 using namespace anton;
@@ -46,8 +47,11 @@ int main() {
   assert(derive_state(pr, std::nullopt).text == "draft");
   Status queued{"⚙", "queued"};
   assert(derive_state(pr, queued).text == "⚙ queued");  // custom beats GitHub signals
+  pr.mergeable = "CONFLICTING";
+  assert(derive_state(pr, queued).kind == Kind::Conflict);  // a queued PR that can't merge
   pr.state = "MERGED";
   assert(derive_state(pr, queued).text == "merged");     // but never a finished PR
+  assert(derive_state(pr, queued).kind == Kind::Merged);
 
   // urls
   assert(normalize_url("https://GitHub.com/o/r/pull/12/files#diff") == "https://github.com/o/r/pull/12");
@@ -115,6 +119,20 @@ int main() {
   apply_line(st, R"({"pr":"o/r#1"})");
   assert(!st.prs.count(url));  // a clearing line forgets the PR
 
+  // recent: open, or closed/merged within the window
+  assert(duration_secs("24h") == 86400 && duration_secs("2d") == 172800);
+  assert(duration_secs("24") == 0 && duration_secs("h") == 0 && duration_secs("1w") == 0);
+  assert(!parse_local("recent:soon", err));
+  auto rec = parse_local("recent:24h", err);
+  assert(rec);
+  Pr m;
+  assert(local_match(m, *rec, ""));  // open
+  m.state = "MERGED";
+  m.closed = std::time(nullptr) - 3600;
+  assert(local_match(m, *rec, ""));
+  m.closed = std::time(nullptr) - 2 * 86400;
+  assert(!local_match(m, *rec, ""));
+
   // sorting
   std::vector<Pr> v(3);
   v[0].additions = 1;
@@ -122,6 +140,30 @@ int main() {
   v[2].additions = 10;
   sort_prs(v, Sort::Size);
   assert(v[0].additions == 100 && v[2].additions == 1);
+
+  {  // title_strip: a ticket prefix cut from titles; a bad regex is an error
+    Config c;
+    assert(parse_config(R"({"title_strip": "^\\[(PRO|ARG)-\\d+\\]\\s*"})", c).empty());
+    assert(std::regex_replace("[PRO-1234] Fix login", c.title_re, "") == "Fix login");
+    assert(std::regex_replace("[ARG-7]Fix", c.title_re, "") == "Fix");
+    assert(std::regex_replace("Fix [PRO-1] later", c.title_re, "") == "Fix [PRO-1] later");
+    Config bad;
+    assert(!parse_config(R"({"title_strip": "[PRO"})", bad).empty());
+  }
+
+  {  // people: hex and/or ansi, keyed by lowercased login
+    Config c;
+    assert(parse_config(R"({"people": {"VictorOda": {"name": "victor", "hex": "#E5534b", "ansi": "bright_red"},
+                                       "bob": {"ansi": 208}}})", c).empty());
+    const Person& v = c.people.at("victoroda");
+    assert(v.name == "victor" && v.rgb == 0xe5534b && v.ansi == 9);
+    assert(c.people.at("bob").ansi == 208 && c.people.at("bob").rgb == -1);
+    assert(parse_ansi("red") == 1 && parse_ansi("GRAY") == 8 && parse_ansi(256) == -1 && parse_ansi("pink") == -1);
+    assert(parse_hex("#fff") == -1 && parse_hex("e5534b0") == -1);
+    Config bad;
+    assert(!parse_config(R"({"people": {"x": {"hex": "red"}}})", bad).empty());
+    assert(!parse_config(R"({"people": {"x": {"ansi": "pink"}}})", bad).empty());
+  }
 
   std::puts("model_check: all checks passed");
 }

@@ -3,12 +3,15 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <map>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "model.hpp"  // lower
 #include "plugins.hpp"
 
 namespace anton {
@@ -19,10 +22,46 @@ struct View {
   bool is_list() const { return !list.empty(); }
 };
 
+// A GitHub user as you want to see them: the name your Slack plugin shows for
+// them (so the author column and Slack tags line up), and a color.
+struct Person {
+  std::string name;  // "" = keep the login
+  int rgb = -1;      // 0xRRGGBB from "hex"; used on truecolor terminals
+  int ansi = -1;     // 0-255 from "ansi"; used on older ones (and if no hex)
+};
+
+// "red", "bright_red", "gray", or 0-255. -1 if none of those.
+inline int parse_ansi(const nlohmann::json& v) {
+  if (v.is_number_integer()) {
+    int n = v.get<int>();
+    return n >= 0 && n <= 255 ? n : -1;
+  }
+  if (!v.is_string()) return -1;
+  static const char* base[] = {"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"};
+  std::string s = lower(v.get<std::string>());
+  if (s == "gray" || s == "grey") return 8;
+  bool bright = s.rfind("bright_", 0) == 0;
+  if (bright) s = s.substr(7);
+  for (int i = 0; i < 8; ++i)
+    if (s == base[i]) return i + (bright ? 8 : 0);
+  return -1;
+}
+
+// "#rrggbb" -> 0xRRGGBB, -1 if malformed.
+inline int parse_hex(const std::string& s) {
+  if (s.size() != 7 || s[0] != '#') return -1;
+  for (size_t i = 1; i < 7; ++i)
+    if (!std::isxdigit(static_cast<unsigned char>(s[i]))) return -1;
+  return static_cast<int>(std::strtol(s.c_str() + 1, nullptr, 16));
+}
+
 struct Config {
   int refresh_seconds = 120;
   int watch_seconds = 15;  // PRs a plugin marks "watch": true
   long green_below = 200, red_from = 1000;
+  // "title_strip": a regex cut out of every title shown, e.g. a ticket prefix.
+  std::string title_strip;
+  std::regex title_re;
   // Mirrors GitHub's own pull-requests page; the first is the landing view.
   std::vector<View> views = {
       {"Created", "is:open author:@me", "", ""},
@@ -31,6 +70,7 @@ struct Config {
       {"Mentioned", "is:open mentions:@me", "", ""},
   };
   std::vector<PluginConfig> plugins;
+  std::map<std::string, Person> people;  // lowercased GitHub login -> person
 };
 
 inline std::string config_path() {
@@ -48,6 +88,24 @@ inline std::string parse_config(const std::string& text, Config& c) {
   try {
     c.refresh_seconds = std::max(10, j.value("refresh_seconds", c.refresh_seconds));
     c.watch_seconds = std::max(5, j.value("watch_seconds", c.watch_seconds));
+    c.title_strip = j.value("title_strip", c.title_strip);
+    if (!c.title_strip.empty()) {
+      try {
+        c.title_re = std::regex(c.title_strip);
+      } catch (const std::regex_error& e) {
+        return "title_strip: bad regex: " + std::string(e.what());
+      }
+    }
+    json people = j.value("people", json::object());  // a named copy: items() keeps a reference
+    for (auto& [login, v] : people.items()) {
+      Person p;
+      p.name = v.value("name", std::string());
+      if (v.contains("hex") && (p.rgb = parse_hex(v.value("hex", std::string()))) < 0)
+        return "people." + login + ".hex: want \"#rrggbb\"";
+      if (v.contains("ansi") && (p.ansi = parse_ansi(v["ansi"])) < 0)
+        return "people." + login + ".ansi: want 0-255 or a name like \"red\", \"bright_red\"";
+      c.people[lower(login)] = p;
+    }
     if (j.contains("size")) {
       c.green_below = j["size"].value("green_below", c.green_below);
       c.red_from = j["size"].value("red_from", c.red_from);

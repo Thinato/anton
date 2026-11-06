@@ -35,6 +35,7 @@ either.
 | `--review-emoji a,b` | `eyes,zoiando` | reactions that mean "reviewing" |
 | `--deploy-channel C` | off | channel whose posts mean "queued" |
 | `--deploy-clear-emoji a,b` | `p2r2-rejected-pr` | reactions that take a PR back out of the queue |
+| `--deploy-merged-emoji e` | `p2r2-pr-merged` | p2r2 merged it: the PR is marked `"watch": true` so anton re-checks GitHub within seconds and shows GitHub's purple `merged`. The plugin never claims "merged" itself; GitHub is the source of truth. |
 | `--deploy-state emoji=glyph:text` | see "Deploy channel" | repeatable, **in pipeline order**; replaces the defaults |
 | `--backfill N` | `1000` | messages read per channel at startup. Slack's max is 1000: a bigger value is capped, a non-number uses 1000, both with a warning on stderr |
 | `--slkx PATH` | `slkx` | the slkx binary |

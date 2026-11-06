@@ -122,6 +122,11 @@ int main() {
   assert(f.line(PR2)["status"]["text"] == "queued");
   assert(f.line(PR2)["lists"] == json({"code-review"}));  // from the broadcast earlier
 
+  // merged reaction: anton should re-check GitHub now
+  assert(!f.line(PR2).contains("watch"));
+  f.event(react(true, "DP", "1700000001.000000", "p2r2-pr-merged", "BOT"));
+  assert(f.line(PR2)["watch"] == true);
+
   // rejected -> no status; a newer post re-queues it
   f.event(react(true, "DP", "1700000001.000000", "p2r2-rejected-pr", "BOT"));
   assert(!f.line(PR2).contains("status"));

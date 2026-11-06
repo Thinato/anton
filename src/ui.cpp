@@ -16,6 +16,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/string.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 #include "github.hpp"
 #include "model.hpp"
@@ -221,8 +222,10 @@ struct Ui {
               it->second.my_review_at != pr.my_review_at)
             for (size_t i = 0; i < approvals.size(); ++i)
               if (!one_shot(i)) approvals[i].insert(pr.url);
-          if (pr.partial && it != cache.end() && !it->second.partial)
+          if (pr.partial && it != cache.end() && !it->second.partial) {
             it->second.state = pr.state;  // keep the full data we already have
+            it->second.closed = pr.closed;
+          }
           else
             cache[pr.url] = pr;
         }
@@ -266,6 +269,33 @@ struct Ui {
     for (size_t i = 0; i < cfg.plugins.size(); ++i)
       if (cfg.plugins[i].name == name) return static_cast<int>(i);
     return -1;
+  }
+
+  std::string shown_title(const std::string& t) const {
+    return cfg.title_strip.empty() ? t : std::regex_replace(t, cfg.title_re, "");
+  }
+  // -- people (config "people") ----------------------------------------------
+
+  const Person* person(const std::string& login) const {
+    auto it = cfg.people.find(lower(login));
+    return it != cfg.people.end() ? &it->second : nullptr;
+  }
+  // A Slack tag names someone by their Slack name: the person whose "name" it
+  // is, or you.
+  const Person* tag_person(const Tag& t) const {
+    if (t.text == "you") return person(viewer);
+    for (auto& [login, p] : cfg.people)
+      if (!p.name.empty() && lower(p.name) == lower(t.text)) return &p;
+    return nullptr;
+  }
+  static Element paint(Element e, const Person* p) {
+    if (!p) return e;
+    static const bool truecolor = Terminal::ColorSupport() == Terminal::TrueColor;
+    if (p->rgb >= 0 && (truecolor || p->ansi < 0))  // no ansi: FTXUI picks the nearest
+      return e | color(Color::RGB(p->rgb >> 16, (p->rgb >> 8) & 0xff, p->rgb & 0xff));
+    if (p->ansi >= 0)
+      return e | color(p->ansi < 16 ? Color(Color::Palette16(p->ansi)) : Color(Color::Palette256(p->ansi)));
+    return e;
   }
 
   bool one_shot(size_t i) const { return cfg.plugins[i].rerun != "exit"; }
@@ -408,7 +438,8 @@ struct Ui {
     if (!preds) return {};
     std::vector<Pred> known;
     for (auto& p : *preds)
-      if (p.key == "org" || p.key == "user" || p.key == "repo" || (p.key == "is" && p.value != "draft"))
+      if (p.key == "org" || p.key == "user" || p.key == "repo" || p.key == "recent" ||
+          (p.key == "is" && p.value != "draft"))
         known.push_back(p);
     std::vector<std::string> out;
     for (auto& u : list_urls(v))
@@ -437,7 +468,9 @@ struct Ui {
   Element state_cell(const Shown& s) {
     Element e = cell(s.text, 12);
     switch (s.kind) {
+      case Kind::Merged: return e | color(Color::Magenta);
       case Kind::Done: return e | dim;
+      case Kind::Conflict: return e | bold | color(Color::Red);
       case Kind::Custom: return e | bold | color(Color::Cyan);
       case Kind::Draft: return e | dim;
       case Kind::Failing: return e | color(Color::Red);
@@ -450,18 +483,26 @@ struct Ui {
   }
 
   Element tags_cell(const std::vector<Tag>& tags, int w) {
-    std::string s;
+    Elements parts;
+    int used = 0;
     size_t shown = 0;
     for (auto& t : tags) {
       std::string one = t.glyph.empty() ? t.text : t.glyph + " " + t.text;
-      std::string next = s.empty() ? one : s + " " + one;
+      int add = string_width(one) + (shown ? 1 : 0);
       int rest = static_cast<int>(tags.size() - shown - 1);
-      if (string_width(next) + (rest > 0 ? 3 : 0) > w && shown > 0) break;
-      s = next;
+      if (used + add + (rest > 0 ? 3 : 0) > w && shown > 0) break;
+      if (shown) parts.push_back(text(" "));
+      parts.push_back(paint(text(one), tag_person(t)));
+      used += add;
       ++shown;
     }
-    if (shown < tags.size()) s += " +" + std::to_string(tags.size() - shown);
-    return cell(s, w);
+    if (shown < tags.size()) parts.push_back(text(" +" + std::to_string(tags.size() - shown)));
+    return hbox(std::move(parts)) | size(WIDTH, EQUAL, w);
+  }
+
+  Element author_cell(const std::string& login) {
+    const Person* who = person(login);
+    return paint(cell(who && !who->name.empty() ? who->name : login, 12), who);
   }
 
   Element render_table(const std::vector<Pr>& rs) {
@@ -504,9 +545,9 @@ struct Ui {
                            cell_right(std::to_string(p.number), num_w), text("  "), size_el,
                            text("  "), state_cell(derive_state(p, status_of(p.url))),
                            cell_right(p.created ? age(static_cast<long>(t - p.created)) : "", 4),
-                           text("  "), cell(p.author, 12), text(" "),
+                           text("  "), author_cell(p.author), text(" "),
                            tags_cell(tags_of(p.url), tags_w), text(" "),
-                           text(p.partial ? "…" : p.title) | flex});
+                           text(p.partial ? "…" : shown_title(p.title)) | flex});
       if (static_cast<int>(i) == selected) line = line | inverted | focus;
       lines.push_back(line);
     }

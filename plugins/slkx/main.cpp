@@ -24,6 +24,7 @@ static const char* kUsage =
     "  --review-emoji a,b        default eyes,zoiando\n"
     "  --deploy-channel C        posts mean queued for deploy\n"
     "  --deploy-clear-emoji a,b  default p2r2-rejected-pr\n"
+    "  --deploy-merged-emoji e   default p2r2-pr-merged: re-check the PR on GitHub at once\n"
     "  --deploy-state e=glyph:text  repeatable, in pipeline order; replaces the defaults\n"
     "  --backfill N              messages read per channel at startup (default 1000)\n"
     "  --slkx PATH               default slkx\n";
@@ -156,6 +157,7 @@ static int run_plugin(int argc, char** argv) {
       if (c.review_add.empty() && !c.review_emoji.empty()) c.review_add = *c.review_emoji.begin();
     }
     else if (a == "--deploy-clear-emoji") c.clear_emoji = split(val());
+    else if (a == "--deploy-merged-emoji") c.merged_emoji = val();
     else if (a == "--backfill") {
       // A bad value is a warning, not a failure: the plugin still runs.
       std::string v = val();
