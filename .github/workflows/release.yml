@@ -1,0 +1,83 @@
+name: release
+
+# Every merged PR into main publishes the next patch release,
+# v<major.minor>.N<suffix>, with major.minor taken from project(VERSION) in
+# CMakeLists.txt and the suffix from SUFFIX in the publish step.
+#
+# pull_request_target, not pull_request: a PR from a fork gets a read-only token
+# under pull_request, so the release step could not publish. Running under
+# pull_request_target is safe here because only merged code is checked out --
+# the merge commit already on main, never the PR head.
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Two merges in quick succession must not race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event.pull_request.merged == true
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04  # oldest supported image: oldest glibc the binary needs
+            name: linux-x86_64
+          - os: macos-15
+            name: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+
+      # Dependencies (FTXUI, nlohmann/json) come from FetchContent: nothing to
+      # install, and the binaries need only system libraries.
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j --target anton anton-slkx
+
+      - name: Package
+        run: tar -czf anton-${{ matrix.name }}.tar.gz -C build anton anton-slkx
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anton-${{ matrix.name }}
+          path: anton-${{ matrix.name }}.tar.gz
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          # Empty it for stable releases. N keeps counting across the switch.
+          SUFFIX: -beta
+        run: |
+          base=$(sed -nE 's/^project\(anton VERSION ([0-9]+\.[0-9]+)\..*/\1/p' CMakeLists.txt)
+          last=$(git ls-remote --tags --refs origin "refs/tags/v$base.*" \
+            | sed -nE "s|.*refs/tags/v$base\.([0-9]+)(-[a-z]+)?$|\1|p" | sort -n | tail -1)
+          tag="v$base.$(( ${last:--1} + 1 ))$SUFFIX"
+          gh release create "$tag" dist/*.tar.gz --target "$SHA" --title "$tag" --generate-notes

@@ -136,9 +136,10 @@ spec when you change the behavior. The logic that matters (state ranking,
 filters, the Slack event fold) is kept in pure headers, `src/model.hpp` and
 `plugins/slkx/fold.hpp`, checked by the asserts in `tests/`.
 
-Work goes through pull requests; CI builds and tests each one on macOS and
-Linux. To release, bump `VERSION` in `CMakeLists.txt` in a PR: merging it
-publishes `v<VERSION>` with binaries attached.
+Work goes through pull requests. CI builds and runs the checks on each one,
+and they must pass to merge. Every merged PR publishes the next release,
+`v<major.minor>.N-beta`, with macOS and Linux binaries; bump `VERSION` in
+`CMakeLists.txt` to start a new major.minor.
 
 `docs/demo/run.sh` runs anton on made-up PRs with a fake `gh` and a fake Slack
 plugin. The screenshot comes from it.
