@@ -87,6 +87,7 @@ struct Ui {
   std::set<std::string> want_full;  // full fields regardless (stubs a view shows)
   bool busy = false;
   std::set<std::string> requested_full;  // UI thread
+  std::vector<std::set<std::string>> approvals;  // per plugin: new approvals not yet delivered
 
   explicit Ui(Config c) : cfg(std::move(c)), views(cfg.views) {
     for (auto& v : views) sorts.push_back(v.is_list() ? Sort::List : Sort::Updated);
@@ -94,6 +95,7 @@ struct Ui {
     pending.resize(cfg.plugins.size());
     running.assign(cfg.plugins.size(), true);
     last_code.assign(cfg.plugins.size(), 0);
+    approvals.resize(cfg.plugins.size());
     InputOption qo;
     qo.content = &query_buf;
     qo.multiline = false;
@@ -199,11 +201,18 @@ struct Ui {
           owners.insert(pr.owner);
           repos.insert(pr.repo);
           auto it = cache.find(pr.url);
+          // A new approval: one seen happen, not one that predates anton --
+          // replaying old ones would undo a 👀 you put back for a re-review.
+          if (!pr.partial && pr.my_review == "APPROVED" && it != cache.end() && !it->second.partial &&
+              it->second.my_review_at != pr.my_review_at)
+            for (size_t i = 0; i < approvals.size(); ++i)
+              if (!one_shot(i)) approvals[i].insert(pr.url);
           if (pr.partial && it != cache.end() && !it->second.partial)
             it->second.state = pr.state;  // keep the full data we already have
           else
             cache[pr.url] = pr;
         }
+        notify_approved();
         error = f.error;
         if (!f.error.empty()) return;  // a failed refresh keeps the old rows
         if (is_search) results[q] = got;
@@ -259,7 +268,9 @@ struct Ui {
       live[i].health_text.clear();
     }
     PluginState& st = one_shot(i) ? pending[i] : live[i];
+    bool was_ok = st.health == "ok";
     std::string url = apply_line(st, line);
+    if (!was_ok && st.health == "ok") notify_approved();  // ready (again): catch it up
     if (one_shot(i)) {  // health shows live even while the PRs wait for the run to end
       live[i].health = st.health;
       live[i].health_text = st.health_text;
@@ -286,6 +297,33 @@ struct Ui {
       live[i].health = "exited";
       live[i].health_text = "exit code " + std::to_string(code);
     }
+  }
+
+  // Delivers new approvals (anton-slkx swaps your 👀 for 👍) to plugins that
+  // are up; the rest wait for the plugin's next health ok.
+  void notify_approved() {
+    if (!plugins) return;
+    for (size_t i = 0; i < approvals.size(); ++i) {
+      if (live[i].health != "ok") continue;
+      for (auto it = approvals[i].begin(); it != approvals[i].end();)
+        it = plugins->send(i, nlohmann::json({{"event", "approved"}, {"pr", *it}}).dump())
+                 ? approvals[i].erase(it)
+                 : std::next(it);
+    }
+  }
+
+  // A plugin-declared key on the selected PR. False if no plugin claims it.
+  bool plugin_action(const std::string& key, const Pr* cur) {
+    for (size_t i = 0; i < cfg.plugins.size(); ++i)
+      for (auto& a : one_shot(i) ? std::vector<Action>{} : live[i].actions) {  // no stdin
+        if (a.key != key) continue;
+        if (!cur) return true;
+        std::string name = cfg.plugins[i].name, pr = cur->repo + "#" + std::to_string(cur->number);
+        bool ok = plugins && plugins->send(i, nlohmann::json({{"action", a.id}, {"pr", cur->url}}).dump());
+        flash(name + ": " + (ok ? (a.label.empty() ? a.id : a.label) + " — " + pr : "not running"));
+        return true;
+      }
+    return false;
   }
 
   bool plugin_up(size_t i) const {
@@ -549,6 +587,8 @@ struct Ui {
       l.push_back(text("    " + std::to_string(st.prs.size()) + " PRs, " +
                        std::to_string(st.bad_lines) + " bad lines") |
                   dim);
+      for (auto& a : st.actions)
+        l.push_back(text("    " + a.key + "  " + (a.label.empty() ? a.id : a.label)));
       if (!st.last_stderr.empty()) l.push_back(text("    stderr: " + st.last_stderr) | dim);
     }
     return window(text(" anton "), vbox(std::move(l))) | clear_under | center;
@@ -710,6 +750,7 @@ struct Ui {
     } else if (e.is_character() && e.character().size() == 1 && e.character()[0] >= '1' &&
                e.character()[0] <= '9') {
       switch_view(static_cast<size_t>(e.character()[0] - '1'));
+    } else if (e.is_character() && plugin_action(e.character(), cur)) {
     } else {
       return false;
     }

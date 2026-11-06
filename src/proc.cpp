@@ -31,10 +31,11 @@ static int make_pipe(int fds[2]) {
 
 Spawned spawn(const std::vector<std::string>& argv,
               const std::map<std::string, std::string>& extra_env, const std::string& input,
-              bool new_group) {
+              bool new_group, bool keep_stdin) {
   Spawned s;
+  bool piped = keep_stdin || !input.empty();
   int out[2] = {-1, -1}, err[2] = {-1, -1}, in[2] = {-1, -1};
-  if (make_pipe(out) != 0 || make_pipe(err) != 0 || (!input.empty() && make_pipe(in) != 0)) {
+  if (make_pipe(out) != 0 || make_pipe(err) != 0 || (piped && make_pipe(in) != 0)) {
     s.error = std::strerror(errno);
     for (int fd : {out[0], out[1], err[0], err[1], in[0], in[1]})
       if (fd != -1) close(fd);
@@ -43,7 +44,7 @@ Spawned spawn(const std::vector<std::string>& argv,
 
   posix_spawn_file_actions_t fa;
   posix_spawn_file_actions_init(&fa);
-  if (input.empty())
+  if (!piped)
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
   else
     posix_spawn_file_actions_adddup2(&fa, in[0], 0);
@@ -95,7 +96,9 @@ Spawned spawn(const std::vector<std::string>& argv,
   }
   s.out = out[0];
   s.err = err[0];
-  if (in[1] != -1) {
+  if (keep_stdin) {
+    s.in = in[1];
+  } else if (in[1] != -1) {
     // Small inputs (a URL for pbcopy) fit the pipe buffer; a writer thread
     // keeps a large one from deadlocking against the reader.
     std::thread([fd = in[1], input] {

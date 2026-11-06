@@ -29,6 +29,7 @@ struct Pr {
   std::string review_decision;    // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | ""
   std::string checks;             // SUCCESS | FAILURE | ERROR | PENDING | EXPECTED | ""
   std::string my_review;          // viewer's latest review state, "" if none
+  std::string my_review_at;       // ...and when it was submitted
   bool draft = false;
   long additions = 0, deletions = 0;
   std::time_t created = 0, updated = 0;
@@ -311,8 +312,14 @@ struct PrInfo {
   std::optional<double> order;  // list views' default sort: higher first
 };
 
+// A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
+struct Action {
+  std::string id, key, label;
+};
+
 struct PluginState {
   std::map<std::string, PrInfo> prs;  // by normalized URL
+  std::vector<Action> actions;        // the latest "actions" line
   std::string health;                 // "" until the plugin says
   std::string health_text;
   std::string last_stderr;
@@ -334,6 +341,12 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
   if (j.contains("health")) {
     st.health = str(j, "health");
     st.health_text = str(j, "text");
+  }
+  if (auto it = j.find("actions"); it != j.end() && it->is_array()) {
+    st.actions.clear();
+    for (auto& a : *it)  // one-character keys only: anton's own keys win
+      if (a.is_object() && !str(a, "id").empty() && str(a, "key").size() == 1)
+        st.actions.push_back({str(a, "id"), str(a, "key"), str(a, "label")});
   }
   if (!j.contains("pr")) return "";
   std::string url = normalize_url(str(j, "pr"));

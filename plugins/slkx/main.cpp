@@ -1,8 +1,11 @@
 // anton-slkx: Slack -> anton plugin lines. See specs/03-plugin-slkx.md.
 #include <signal.h>
+#include <unistd.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdio>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -26,7 +29,7 @@ static const char* kUsage =
     "  --slkx PATH               default slkx\n";
 
 static std::string slkx_bin = "slkx";
-static pid_t watch_pid = -1;
+static std::atomic<pid_t> watch_pid = -1;  // read by the signal handler
 
 static void emit(const std::string& line) {
   std::fputs(line.c_str(), stdout);
@@ -35,10 +38,11 @@ static void emit(const std::string& line) {
 }
 
 [[noreturn]] static void fail(const std::string& why) {
-  if (watch_pid > 0) ::kill(watch_pid, SIGTERM);  // or it outlives us
+  if (pid_t w = watch_pid; w > 0) ::kill(w, SIGTERM);  // or it outlives us
   emit(json({{"health", "error"}, {"text", why}}).dump(-1, ' ', false, json::error_handler_t::replace));
   std::fprintf(stderr, "anton-slkx: %s\n", why.c_str());
-  std::exit(1);
+  std::fflush(nullptr);
+  ::_exit(1);  // not exit(): the stdin thread may still be using statics
 }
 
 static json slkx_json(std::vector<std::string> args) {
@@ -70,6 +74,65 @@ static std::string resolve(const json& cache, std::string ch) {
   fail("unknown channel " + ch + " (try: slkx channels --refresh)");
 }
 
+// anton -> us: {"action":"review","pr":url} when you press v, and
+// {"event":"approved","pr":url} when GitHub says you approved. Each becomes
+// slkx reactions, shown at once and undone if slkx fails.
+static void serve_one(Fold& fold, std::mutex& mu, const std::string& review_name, const std::string& line);
+
+static void serve_stdin(Fold& fold, std::mutex& mu, const std::string& review_name) {
+  for (std::string line; std::getline(std::cin, line);) {
+    try {
+      serve_one(fold, mu, review_name, line);
+    } catch (const std::exception& e) {  // one bad request is skipped, not fatal
+      std::fprintf(stderr, "anton-slkx: %s\n", e.what());
+    }
+  }
+}
+
+static void serve_one(Fold& fold, std::mutex& mu, const std::string& review_name, const std::string& line) {
+  json in = json::parse(line, nullptr, false);
+  if (!in.is_object() || !in.contains("pr") || !in["pr"].is_string()) return;
+  std::string url = normalize_url(in["pr"].get<std::string>());
+  bool toggle = in.value("action", json()) == "review";
+  bool approved = in.value("event", json()) == "approved";
+  if (url.empty() || (!toggle && !approved)) return;
+  std::vector<React> todo;
+  {
+    std::lock_guard lk(mu);
+    todo = toggle ? fold.toggle_review(url) : fold.approved(url);
+    if (todo.empty()) {
+      if (toggle) std::fprintf(stderr, "anton-slkx: %s is not posted in %s\n", url.c_str(), review_name.c_str());
+      return;
+    }
+    std::set<std::string> touched;
+    for (auto& r : todo) {
+      auto t = fold.event(fold.as_event(r));
+      touched.insert(t.begin(), t.end());
+    }
+    for (auto& l : fold.changed(touched)) emit(l);
+  }
+  for (size_t i = 0; i < todo.size(); ++i) {
+    const React& r = todo[i];
+    std::vector<std::string> args = {slkx_bin, "react", "--message", r.ts, "--channel", r.ch, "--emoji", r.emoji};
+    if (r.remove) args.push_back("--remove");
+    Result res = run(args, "", false);
+    if (res.code == 0) continue;
+    // Stop here: undo this one and the ones never sent, so the fold matches Slack.
+    std::lock_guard lk(mu);
+    std::set<std::string> touched;
+    for (size_t j = i; j < todo.size(); ++j) {
+      auto t = fold.event(fold.as_event(todo[j], true));
+      touched.insert(t.begin(), t.end());
+    }
+    for (auto& l : fold.changed(touched)) emit(l);
+    std::string err = res.err.substr(0, res.err.find('\n'));
+    if (err.empty()) err = "exit " + std::to_string(res.code);
+    std::fprintf(stderr, "anton-slkx: :%s: %s failed: %s\n", r.emoji.c_str(), r.remove ? "removal" : "reaction",
+                 err.c_str());
+    return;
+  }
+}
+
 static int run_plugin(int argc, char** argv) {
   FoldConfig c;
   std::string review, deploy;
@@ -86,7 +149,12 @@ static int run_plugin(int argc, char** argv) {
     };
     if (a == "--review-channel") review = val();
     else if (a == "--deploy-channel") deploy = val();
-    else if (a == "--review-emoji") c.review_emoji = split(val());
+    else if (a == "--review-emoji") {
+      std::string v = val();
+      c.review_emoji = split(v);
+      c.review_add = v.substr(0, v.find(','));
+      if (c.review_add.empty() && !c.review_emoji.empty()) c.review_add = *c.review_emoji.begin();
+    }
     else if (a == "--deploy-clear-emoji") c.clear_emoji = split(val());
     else if (a == "--backfill") {
       // A bad value is a warning, not a failure: the plugin still runs.
@@ -162,6 +230,7 @@ static int run_plugin(int argc, char** argv) {
           std::lock_guard lk(mu);
           last_err = line;
         });
+    watch_pid = -1;  // reaped: the pid may be reused
     std::lock_guard lk(mu);
     fail("slkx watch exited (" + std::to_string(code) + ")" +
          (last_err.empty() ? "" : ": " + last_err));
@@ -184,14 +253,23 @@ static int run_plugin(int argc, char** argv) {
     }
     for (auto& l : fold.changed(seen)) emit(l);
     emit(R"({"health":"ok"})");
+    if (!c.review_ch.empty())
+      emit(R"({"actions":[{"id":"review","key":"v","label":"toggle 👀 reviewing in Slack"}]})");
     ready = true;
   }
   cv.notify_all();
+  if (!c.review_ch.empty()) std::thread([&] { serve_stdin(fold, mu, review); }).detach();
   watcher.join();  // never returns: the watcher fail()s when slkx watch exits
   return 1;
 }
 
 int main(int argc, char** argv) {
+  // Killed on its own (not as a group, as anton does): take slkx watch along.
+  for (int sig : {SIGTERM, SIGHUP, SIGINT})
+    ::signal(sig, [](int s) {
+      if (pid_t w = watch_pid; w > 0) ::kill(w, SIGTERM);
+      ::_exit(128 + s);
+    });
   try {
     return run_plugin(argc, argv);
   } catch (const std::exception& e) {

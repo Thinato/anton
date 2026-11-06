@@ -104,6 +104,8 @@ int main() {
   assert(!st.prs[url].status && st.prs[url].tags.empty());  // omitted = none
   apply_line(st, R"({"health":"error","text":"expired"})");
   assert(st.health == "error" && st.health_text == "expired");
+  apply_line(st, R"({"actions":[{"id":"review","key":"v","label":"toggle"},{"id":"x","key":"vv"}]})");
+  assert(st.actions.size() == 1 && st.actions[0].id == "review" && st.actions[0].key == "v");
   apply_line(st, "not json");
   apply_line(st, R"({"pr":"nope"})");
   assert(st.bad_lines == 2);

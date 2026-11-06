@@ -33,6 +33,9 @@ class Plugins {
   void start();
   void refresh();  // reruns the "refresh" plugins
   void stop();     // kills every plugin's process group
+  // One line to a long-running plugin's stdin. False if it isn't running or
+  // its pipe is full (it doesn't read stdin): never blocks the UI.
+  bool send(size_t i, const std::string& line);
 
   // Async-signal-safe: SIGTERM to every running plugin's group. For fatal
   // signal handlers, where stop()'s mutex can't be taken.
@@ -49,6 +52,7 @@ class Plugins {
   std::condition_variable cv_;
   // Fixed slots so a signal handler can read them lock-free.
   static inline std::atomic<pid_t> pids_[kMaxPlugins] = {};
+  int in_[kMaxPlugins];  // stdin write ends, -1 when not running; under mu_
   unsigned long refresh_gen_ = 0;
   bool stopped_ = false;
 };

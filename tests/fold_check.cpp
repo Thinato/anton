@@ -131,5 +131,51 @@ int main() {
   f.event(msg("DP", "1700000003.000000", "https://github.com/o/r/pull/3"));
   assert(!f.line("https://github.com/o/r/pull/3").contains("lists"));
 
+  // review toggle (v in anton) and approval, on a fresh fold
+  {
+    Fold g(c);
+    const std::string P = "https://github.com/o/r/pull/50";
+    assert(g.toggle_review(P).empty());  // not posted: nothing to react to
+    g.event(msg("CR", "1700000010.000000", P));
+    g.event(msg("CR", "1700000020.000000", P));  // repost: the newest gets the emoji
+    auto t = g.toggle_review(P);
+    assert(t.size() == 1 && t[0].ts == "1700000020.000000" && t[0].emoji == "eyes" && !t[0].remove);
+    assert(g.approved(P).empty());  // not reviewing: approval touches nothing
+    g.event(g.as_event(t[0]));      // applied before Slack echoes it
+    assert((handles(g.line(P)) == std::vector<std::string>{"you"}));
+    g.event(react(true, "CR", "1700000010.000000", "zoiando", "UME"));
+    g.event(react(true, "CR", "1700000010.000000", "eyes", "UA"));  // others' stay
+    t = g.toggle_review(P);  // on -> off: every review emoji of yours comes off
+    assert(t.size() == 2 && t[0].remove && t[1].remove);
+    assert(g.as_event(t[0], true)["type"] == "reaction_added");  // undoing a removal re-adds
+    auto a = g.approved(P);  // 👍 first, then your review emoji off
+    assert(a.size() == 3 && a[0].emoji == "+1" && !a[0].remove && a[0].ts == "1700000020.000000");
+    assert(a[1].remove && a[2].remove);
+    for (auto& r : a) g.event(g.as_event(r));
+    assert((handles(g.line(P)) == std::vector<std::string>{"alice"}));
+    assert(g.approved(P).empty());  // done: a repeated event is a no-op
+
+    // a shared "stack" post is not one PR's to change on approval
+    const std::string Q = "https://github.com/o/r/pull/60", R = "https://github.com/o/r/pull/61";
+    g.event(msg("CR", "1700000030.000000", Q + " " + R));
+    g.event(react(true, "CR", "1700000030.000000", "eyes", "UME"));
+    assert(g.approved(Q).empty());
+    g.event(msg("CR", "1700000040.000000", Q));  // Q alone, reviewed, already 👍 with a skin tone
+    g.event(react(true, "CR", "1700000040.000000", "eyes", "UME"));
+    g.event(react(true, "CR", "1700000040.000000", "+1::skin-tone-3", "UME"));
+    a = g.approved(Q);
+    assert(a.size() == 1 && a[0].remove && a[0].ts == "1700000040.000000");  // no second 👍; stack post kept
+  }
+
+  // v puts on the first configured review emoji, not the alphabetically first
+  {
+    FoldConfig c2 = c;
+    c2.review_emoji = {"zoiando", "eyes"};
+    c2.review_add = "zoiando";
+    Fold h(c2);
+    h.event(msg("CR", "1700000050.000000", PR1));
+    assert(h.toggle_review(PR1)[0].emoji == "zoiando");
+  }
+
   std::puts("fold_check: all checks passed");
 }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <string>
@@ -23,9 +24,16 @@ struct Step {
   std::string emoji, glyph, text;
 };
 
+// One reaction to add or remove on a message.
+struct React {
+  std::string ch, ts, emoji;
+  bool remove = false;
+};
+
 struct FoldConfig {
   std::string review_ch, deploy_ch;  // channel ids; "" = rule off
   std::set<std::string> review_emoji = {"eyes", "zoiando"};
+  std::string review_add = "eyes";  // what `v` puts on: the first --review-emoji
   std::set<std::string> clear_emoji = {"p2r2-rejected-pr"};
   Step posted = {"", "⚙", "queued"};  // a deploy post with no step reaction yet
   std::vector<Step> steps = {         // in pipeline order: the furthest present wins
@@ -35,6 +43,7 @@ struct FoldConfig {
       {"p2r2-pr-queued-for-merge", "⚙", "queued"},
       {"p2r2-pr-merging", "⚙", "queued"},
   };
+  std::string approve_emoji = "+1";          // replaces your review emoji once you approve
   std::string me;                            // your user id: renders as "you"
   std::map<std::string, std::string> names;  // user id -> handle
 };
@@ -165,6 +174,44 @@ class Fold {
     return j;
   }
 
+  // `v` in anton: your review emoji off every post naming the PR if you have
+  // any, else the first review emoji on its newest post. {} if not posted.
+  std::vector<React> toggle_review(const std::string& url) const {
+    if (c_.me.empty() || c_.review_emoji.empty()) return {};
+    auto out = my_review_reacts(url, false);
+    if (!out.empty()) return out;
+    auto post = newest_review_post(url, false);
+    if (!post) return {};
+    return {{post->first, post->second, c_.review_add}};
+  }
+
+  // You approved on GitHub: if you were reviewing, the approve emoji goes on
+  // the newest post and your review emoji come off. Only posts naming just
+  // this PR: a shared "stack: A, B, C" post is not A's to change. 👍 first, so
+  // a failure part way leaves you still marked as reviewing, not neither.
+  std::vector<React> approved(const std::string& url) const {
+    if (c_.me.empty()) return {};
+    auto offs = my_review_reacts(url, true);
+    if (offs.empty()) return {};
+    auto post = newest_review_post(url, true);
+    std::vector<React> out;
+    bool has = false;
+    for (auto& [emoji, user] : msgs_.at(*post).reacts)  // 👍 with a skin tone is "+1::skin-tone-2"
+      has = has || (user == c_.me && emoji.substr(0, emoji.find("::")) == c_.approve_emoji);
+    if (!has) out.push_back({post->first, post->second, c_.approve_emoji});
+    out.insert(out.end(), offs.begin(), offs.end());
+    return out;
+  }
+
+  // The reaction event Slack will echo back for r, by you. Applying it before
+  // the echo shows the change at once; the echo is then a no-op.
+  json as_event(const React& r, bool undo = false) const {
+    return {{"type", r.remove != undo ? "reaction_removed" : "reaction_added"},
+            {"user", c_.me},
+            {"reaction", r.emoji},
+            {"item", {{"type", "message"}, {"channel", r.ch}, {"ts", r.ts}}}};
+  }
+
   // Lines for the given PRs that differ from what was last emitted.
   std::vector<std::string> changed(const std::set<std::string>& urls) {
     std::vector<std::string> out;
@@ -207,6 +254,28 @@ class Fold {
   std::string name(const std::string& id) const {
     auto it = c_.names.find(id);
     return it != c_.names.end() ? it->second : id;
+  }
+  bool review_post(const std::pair<std::string, std::string>& key, const Msg& msg, const std::string& url,
+                   bool only_this) const {
+    return key.first == c_.review_ch && std::find(msg.urls.begin(), msg.urls.end(), url) != msg.urls.end() &&
+           (!only_this || msg.urls.size() == 1);
+  }
+  std::vector<React> my_review_reacts(const std::string& url, bool only_this) const {
+    std::vector<React> out;
+    for (auto& [key, msg] : msgs_) {
+      if (!review_post(key, msg, url, only_this)) continue;
+      for (auto& [emoji, user] : msg.reacts)
+        if (user == c_.me && c_.review_emoji.count(emoji)) out.push_back({key.first, key.second, emoji, true});
+    }
+    return out;
+  }
+  std::optional<std::pair<std::string, std::string>> newest_review_post(const std::string& url,
+                                                                         bool only_this) const {
+    std::optional<std::pair<std::string, std::string>> best;
+    for (auto& [key, msg] : msgs_)
+      if (review_post(key, msg, url, only_this) && (!best || key.second > best->second))
+        best = key;
+    return best;
   }
   std::set<std::string> urls_of(const std::pair<std::string, std::string>& key) const {
     auto it = msgs_.find(key);

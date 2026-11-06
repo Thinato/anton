@@ -109,11 +109,33 @@ The latest `health` per plugin is shown in the footer as `slack ●` (ok),
 Objects with neither `pr` nor `health` are ignored, so the protocol can grow
 without breaking old anton builds.
 
+### `actions` — keys the plugin handles (optional)
+
+```json
+{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack"}]}
+```
+
+Each `key` (one character) becomes a key on the selected PR; pressing it
+sends `{"action": id, "pr": url}` on the plugin's stdin and flashes the
+`label`. The latest `actions` line replaces the previous one; actions vanish
+while the plugin is down. anton's own keys win a clash. Listed in `?`.
+
 ## Protocol: anton → plugin (stdin)
 
-Nothing in v1; stdin is `/dev/null`. (A plugin that only wants to annotate the
-PRs on screen could later receive `{"prs": [url, …]}` on each refresh. Add
-when a plugin needs it.)
+Long-running (`"rerun": "exit"`) plugins get a stdin pipe; one-shot plugins
+keep `/dev/null`. One JSON object per line:
+
+| line | when |
+| --- | --- |
+| `{"action": id, "pr": url}` | you pressed a key the plugin declared |
+| `{"event": "approved", "pr": url}` | anton saw a **new** approval by you: a fetch shows your latest review APPROVED with a different `submittedAt` than the last fetch of that PR. Sent once, when the plugin is at `health: ok` (queued until then). Never replayed on restart, so an old approval can't undo a re-review; approvals made while anton was closed are not sent. |
+
+A plugin that doesn't care never reads stdin: anton's writes are
+non-blocking and dropped when the pipe is full, so it can't stall the UI.
+Unknown lines must be ignored, so this can grow too.
+
+Effects (a Slack reaction, say) should show up the normal way: the plugin
+re-sends the PR's `pr` line. anton never updates plugin state on its own.
 
 ## Rendering
 
@@ -144,5 +166,6 @@ that is a new tab in about four lines.
 - No plugin sandboxing: a plugin runs with your user's permissions, like a
   Claude Code hook or a git hook. Only configure commands you trust.
 - Lines over 64 KiB are dropped.
-- Plugins cannot change filters or trigger actions. They describe PRs; anton
-  decides what to show.
+- Plugins cannot change filters or what anton shows beyond their own `pr`
+  lines. Actions run only on a key you press; events only report what anton
+  already fetched.

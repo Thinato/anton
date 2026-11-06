@@ -14,7 +14,7 @@ fragment F on PullRequest {
   number title url isDraft state createdAt updatedAt additions deletions reviewDecision
   repository { nameWithOwner owner { login } }
   author { login }
-  latestReviews(first: 20) { nodes { author { login } state } }
+  latestReviews(first: 20) { nodes { author { login } state submittedAt } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 })";
 
@@ -75,7 +75,10 @@ static Pr to_pr(const json& n, const std::string& viewer) {
   json reviews = at(n, "/latestReviews/nodes"), commits = at(n, "/commits/nodes");
   if (reviews.is_array())
     for (auto& r : reviews)
-      if (sget(at(r, "/author"), "login") == viewer) pr.my_review = sget(r, "state");
+      if (sget(at(r, "/author"), "login") == viewer) {
+        pr.my_review = sget(r, "state");
+        pr.my_review_at = sget(r, "submittedAt");
+      }
   if (commits.is_array())
     for (auto& c : commits) pr.checks = sget(at(c, "/commit/statusCheckRollup"), "state");
   return pr;

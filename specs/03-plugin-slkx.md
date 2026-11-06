@@ -43,6 +43,29 @@ either.
 resolves names to ids once at startup via `slkx channels --json`, because RTM
 events carry ids only.
 
+## Actions (anton → plugin)
+
+With a review channel, the plugin declares `v` (see `02-plugins.md`):
+
+- **`v` — I'm reviewing this.** If you have a review emoji on any post naming
+  the PR, they all come off; otherwise the first `--review-emoji` as given (`eyes`)
+  goes on its **newest** post. `slkx react --message <ts> --channel <id>
+  --emoji <e> [--remove]`. A PR not posted in the channel gets a stderr
+  warning (flashed in anton) and no reaction.
+- **`approved` event — you approved on GitHub.** If you have a review emoji on
+  the PR's posts, `:+1:` goes on the newest post (unless you already have a
+  👍 there, any skin tone), then your review emoji come off. If you weren't
+  marked as reviewing, nothing happens: anton never thumbs-up a PR you didn't
+  claim. Only posts naming **just this PR** count: a shared "stack: A, B, C"
+  post is left alone. anton learns about the approval on its next fetch of the
+  PR (`r`, or every `refresh_seconds`).
+
+The change is applied to the fold right away, so anton shows `👀 you` (or
+drops it) at once; Slack's own `reaction_added`/`_removed` echo is then a
+no-op. If a `slkx react` fails, it and the ones not yet sent are undone and
+the error flashed; 👍 goes first, so a failed approval leaves you marked as
+reviewing rather than neither.
+
 ## Rules in detail
 
 **Live first.** The list is driven by the websocket: `slkx watch` forwards
@@ -165,5 +188,5 @@ plugins/slkx/fold.hpp   the pure fold + derive
 tests/fold_check.cpp    feeds recorded slkx JSON through the fold, asserts
                         the emitted lines (post, react, unreact, edit, delete,
                         repost-union, deploy steps incl. Ready? → queued,
-                        deploy + reject)
+                        deploy + reject, v toggle, approved swap)
 ```

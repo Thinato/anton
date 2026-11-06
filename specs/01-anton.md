@@ -187,8 +187,9 @@ Width is therefore at most 4 chars per side (`+999`, `-10k`).
 | `/` `o` `p` `x` | filters (above) |
 | `s` | cycle sort |
 | `1`..`9`, `Tab` | switch view |
-| `?` | help overlay |
+| `?` | help overlay (also lists plugin keys) |
 | `q` | quit |
+| *plugin keys* | declared by a running plugin, e.g. `v` (anton-slkx: toggle 👀 in Slack) on the selected PR. anton's own keys win a clash. See `02-plugins.md`. |
 
 Refresh: on start, on `r`, on view/filter change, and every
 `refresh_seconds` (default 120). A refresh never blocks input; the footer shows

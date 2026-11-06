@@ -14,16 +14,18 @@ namespace anton {
 struct Spawned {
   pid_t pid = -1;
   int out = -1, err = -1;  // read ends; -1 if spawn failed
+  int in = -1;             // write end of stdin, with keep_stdin
   std::string error;       // strerror when pid == -1
 };
 
 // Starts argv, stdin from `input` if non-empty else /dev/null, stdout/stderr
 // piped. extra_env is added to the inherited environment. With new_group the
 // child leads its own process group, so kill_group also reaches whatever it
-// spawns (without new_group) itself.
+// spawns (without new_group) itself. With keep_stdin, stdin is a pipe whose
+// write end is returned in `in` (the caller closes it); `input` is ignored.
 Spawned spawn(const std::vector<std::string>& argv,
               const std::map<std::string, std::string>& extra_env = {},
-              const std::string& input = "", bool new_group = true);
+              const std::string& input = "", bool new_group = true, bool keep_stdin = false);
 
 // Reads both pipes until EOF, calling the callbacks once per line (without
 // '\n'), then reaps the child. Returns its exit code (128+signal if killed).
