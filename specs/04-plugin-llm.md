@@ -186,9 +186,9 @@ flags, in layers:
   path starts with `//`, which the `/` before `{tmp}` makes). `--add-dir
   {tmp}` makes `{tmp}` a working directory, or the read block would also
   refuse `gh api --input {tmp}/…`; it takes several values, so keep a flag
-  after it rather than the prompt. A compound
-  command (`&&`, `;`, `|`) runs only if every part is allowed. Deny rules
-  win over allow rules; the example denies `gh pr comment` with a file
+  after it rather than the prompt. A compound command (`&&`, `;`, `|`)
+  runs only if every part is allowed. Deny rules win over allow rules; the
+  example denies `gh pr comment` with a file
   (`--body-file`, `-F`) or `--edit-last`/`--delete-last`, `gh api graphql`,
   `gh extension`, `gh alias`, `npx` and `docker`, in case a rule is widened
   later.
@@ -203,9 +203,11 @@ flags, in layers:
   still drop the project's. `--bare` would also do, but needs an API key. The
   PR's `CLAUDE.md` is still read: it is the PR's text, like its code, and
   the rules above are what bound it.
-- **The hook: `anton-llm --check-review`**, below, checks every Bash call
-  before it runs, whatever the rules say. `"onFailure": "block"` blocks the
-  call if the hook can't run (`anton-llm` not on `PATH`, say).
+- **The hook: `anton-llm --check-review`**, below, checks the text of every
+  Bash call before it runs, whatever the rules say. It expands nothing, so
+  `G=gh; $G pr merge 12` gets past it: the permissions above are what stop
+  indirection. `"onFailure": "block"` blocks the call if the hook can't run
+  (`anton-llm` not on `PATH`, say).
 - **GitHub** refuses an approval or a request for changes on your own PR.
   On anyone else's it doesn't, which is what the hook is for.
 
@@ -227,10 +229,13 @@ simple commands at `;`, `&&`, `|`, `$(…)` and the like, and looking inside
 - `gh api graphql` (it can approve and merge), and a non-GET `gh api` on
   `…/pulls/<n>/merge`, `…/pulls/<n>` or `…/issues/<n>` (a PATCH there
   closes or edits the PR);
+- any other non-GET `gh api` under `…/pulls/<n>/reviews`, such as a PUT
+  to `…/dismissals`;
 - a review POST, `gh api` on `…/pulls/<n>/reviews` or
   `…/reviews/<id>/events` (POST is explicit, or implied by `--input` or
-  `-f`; `-X=POST` and `-XPOST` count), unless it is one plain command with `--input FILE`, no `-f`/`-F`
-  fields, and the file holds a JSON object whose `event` is exactly
+  `-f`; `-X=POST` and `-XPOST` count), unless it is one plain command
+  with `--input FILE`, no `-f`/`-F` fields, and the file holds a JSON
+  object whose `event` is exactly
   `"COMMENT"`, once. A missing `event` would leave a pending review that a
   later call could submit as an approval. "One plain command" means no `;`,
   `&`, `|`, `<`, `>`, `(`, `` ` `` or `$` in it, so nothing can rewrite the

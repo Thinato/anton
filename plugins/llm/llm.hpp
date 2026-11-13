@@ -287,7 +287,8 @@ using ReadFile = std::function<std::optional<std::string>(const std::string&)>;
 // Why the Bash command cmd (run in cwd) must not run, or "". Blocks what can
 // approve, request changes, merge or close: `gh pr review` with those flags,
 // `gh pr merge|close`, `gh api graphql`, `gh api` writes to pulls/N/merge or to
-// pulls/N and issues/N themselves (a PATCH closes or edits the PR), and
+// pulls/N and issues/N themselves (a PATCH closes or edits the PR), any other
+// write under pulls/N/reviews (dismissals), and
 // a review POST (pulls/N/reviews, or .../reviews/ID/events) unless it is one
 // plain command whose --input file has "event": "COMMENT".
 inline std::string command_block(const std::string& cmd, const std::string& cwd, const ReadFile& read,
@@ -301,7 +302,7 @@ inline std::string command_block(const std::string& cmd, const std::string& cwd,
     if (g == seg.size()) continue;
     std::vector<std::string> a(seg.begin() + g + 1, seg.end()), pos;  // pos: subcommand words
     for (size_t i = 0; i < a.size() && pos.size() < 2; ++i) {
-      if (a[i] == "-R" || a[i] == "--repo") ++i;
+      if (a[i] == "-R" || a[i] == "--repo" || a[i] == "--hostname") ++i;
       else if (!a[i].starts_with("-")) pos.push_back(a[i]);
     }
     pos.resize(2);
@@ -339,7 +340,9 @@ inline std::string command_block(const std::string& cmd, const std::string& cwd,
     if (method != "GET" && is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/merge/?$)")) return "merging is not allowed";
     if (method != "GET" && is(R"((^|/)repos/[^/]+/[^/]+/(pulls|issues)/[^/]+/?$)"))  // PATCH state=closed
       return "changing or closing the PR is not allowed";
-    if (method != "POST" || !is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/reviews(/[^/]+/events)?/?$)")) continue;
+    if (method == "GET" || !is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/reviews(/|$))")) continue;
+    if (method != "POST" || !is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/reviews(/[^/]+/events)?/?$)"))
+      return "on reviews, only posting a COMMENT review is allowed (no dismissing, editing or deleting)";
     if (depth > 0 || cmd.find_first_of(";&|<>()`$\n") != std::string::npos)
       return "post a review as one plain gh api command, nothing around it";
     if (fields || input.empty() || input == "-") return "post a review with --input FILE and no -f/-F fields";
