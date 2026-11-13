@@ -230,6 +230,7 @@ static void serve_one(const std::string& line) {
 }
 
 int main(int argc, char** argv) {
+  ::signal(SIGPIPE, SIG_IGN);  // an agent that exits before reading its stdin must not kill us
   for (int sig : {SIGTERM, SIGHUP, SIGINT}) ::signal(sig, [](int s) { quit(128 + s); });
   std::string path;
   for (int i = 1; i < argc; ++i) {
