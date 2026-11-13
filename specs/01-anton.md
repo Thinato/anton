@@ -7,7 +7,7 @@ how big each one is, what GitHub says about its state, and whatever external
 tools (plugins) say about it — e.g. "alice is reviewing this" from Slack.
 
 anton has **no Slack knowledge**. Slack is one plugin among possible others
-(see `02-plugins.md`, `03-plugin-slkx.md`).
+(see `02-plugins.md`, `03-plugin-slkx.md`, `04-plugin-llm.md`).
 
 ## Non-goals (v1)
 
@@ -274,10 +274,10 @@ At startup and every 6 hours, anton asks `gh api repos/Thinato/anton/releases/la
 If that tag is newer (by number: `v0.1.12-beta` > `v0.1.9-beta`; the suffix
 doesn't count), it downloads the tarball for this platform with
 `gh release download`, unpacks it next to the running binary and `rename()`s
-`anton` (whatever it's called) and `anton-slkx` (only if it's already there)
-over the old ones. The running process keeps its old file; the footer says
+`anton` (whatever it's called), `anton-slkx` and `anton-llm` (each only if
+it's already there) over the old ones. The running process keeps its old file; the footer says
 `⬆ updated to vX, restart anton to use it` until quit. Nothing is restarted
-behind your back: plugins keep running the old `anton-slkx` until anton
+behind your back: plugins keep running the old binaries until anton
 restarts.
 
 - `"auto_update": false` in the config: only `⬆ anton vX is out`.
@@ -311,15 +311,20 @@ src/plugins.hpp/cpp   spawn plugins, read JSONL, restart, fold into the store
 src/ui.hpp/cpp        FTXUI components: tabs, table, pickers, footer
 plugins/slkx/main.cpp the anton-slkx executable (03-plugin-slkx.md)
 plugins/slkx/fold.hpp its pure event fold — testable without slkx
+plugins/llm/main.cpp  the anton-llm executable (04-plugin-llm.md)
+plugins/llm/llm.hpp   its pure config parse, substitution, pr line
 tests/model_check.cpp assert-based self-check for model.hpp
 tests/fold_check.cpp  assert-based self-check for fold.hpp
+tests/llm_check.cpp   assert-based self-check for llm.hpp
 ```
 
-One CMake project, two executables. `anton-slkx` is built by default
+One CMake project, three executables. `anton-slkx` is built by default
 (`-DANTON_SLKX_PLUGIN=OFF` to skip); it only *execs* `slkx` at runtime, so
 building it needs nothing slkx-related, and anton never requires it.
+`anton-llm` likewise (`-DANTON_LLM_PLUGIN=OFF`); it only execs the commands
+you configure.
 
-`model.hpp` and `fold.hpp` are pure, with assert-based checks run by `ctest`,
+`model.hpp`, `fold.hpp` and `llm.hpp` are pure, with assert-based checks run by `ctest`,
 in the same style as slkx's self-checks.
 
 ## Open questions

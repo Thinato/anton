@@ -1,6 +1,6 @@
 #pragma once
 // Subprocesses without a shell: posix_spawnp + pipes. Shared by anton (gh,
-// plugins, pbcopy) and anton-slkx (slkx).
+// plugins, pbcopy), anton-slkx (slkx) and anton-llm (agents).
 
 #include <sys/types.h>
 
@@ -23,9 +23,11 @@ struct Spawned {
 // child leads its own process group, so kill_group also reaches whatever it
 // spawns (without new_group) itself. With keep_stdin, stdin is a pipe whose
 // write end is returned in `in` (the caller closes it); `input` is ignored.
+// A non-empty cwd is the child's working directory.
 Spawned spawn(const std::vector<std::string>& argv,
               const std::map<std::string, std::string>& extra_env = {},
-              const std::string& input = "", bool new_group = true, bool keep_stdin = false);
+              const std::string& input = "", bool new_group = true, bool keep_stdin = false,
+              const std::string& cwd = "");
 
 // Reads both pipes until EOF, calling the callbacks once per line (without
 // '\n'), then reaps the child. Returns its exit code (128+signal if killed).

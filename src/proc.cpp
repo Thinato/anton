@@ -31,7 +31,7 @@ static int make_pipe(int fds[2]) {
 
 Spawned spawn(const std::vector<std::string>& argv,
               const std::map<std::string, std::string>& extra_env, const std::string& input,
-              bool new_group, bool keep_stdin) {
+              bool new_group, bool keep_stdin, const std::string& cwd) {
   Spawned s;
   bool piped = keep_stdin || !input.empty();
   int out[2] = {-1, -1}, err[2] = {-1, -1}, in[2] = {-1, -1};
@@ -52,6 +52,7 @@ Spawned spawn(const std::vector<std::string>& argv,
   posix_spawn_file_actions_adddup2(&fa, err[1], 2);
   for (int fd : {out[0], out[1], err[0], err[1], in[0], in[1]})
     if (fd > 2) posix_spawn_file_actions_addclose(&fa, fd);
+  if (!cwd.empty()) posix_spawn_file_actions_addchdir_np(&fa, cwd.c_str());  // macOS 10.15+, glibc 2.29+
 
   posix_spawnattr_t attr;
   posix_spawnattr_init(&attr);
