@@ -244,6 +244,15 @@ simple commands at `;`, `&&`, `|`, `$(…)` and the like, and looking inside
 Everything else passes, for the permissions to decide. A relative `--input`
 is read from the hook's `cwd`.
 
+**`--check-review --allow-approve`** also lets that one review POST carry
+`"event": "APPROVE"`, so a reviewer can approve a PR it finds nothing wrong
+with (its `system` has to say when). Everything else above stays blocked,
+requesting changes included. It's opt-in per reviewer, through the hook's
+`args`, because the approval is posted as you: it counts toward branch
+protection like one you clicked, and a PR's own text can try to talk the
+agent into it. Use it where an agent's approval is acceptable, not as a
+substitute for a required human review.
+
 ## Examples
 
 **(a) Read-only.** The diff on stdin, no tools (`--tools ""`), so it can

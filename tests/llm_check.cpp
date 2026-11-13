@@ -154,6 +154,18 @@ int main() {
   assert(hook(post + "/t/none.json") == "a review's \"event\" must be \"COMMENT\" once, not missing");
   assert(hook(post + "/t/twice.json") == "a review's \"event\" must be \"COMMENT\" once, not twice");
   assert(hook(post + "/t/missing.json") == "can't read /t/missing.json");
+  {  // --check-review --allow-approve: APPROVE too, still nothing else
+    auto hook_ok = [&](const std::string& cmd) {
+      return review_block({{"tool_name", "Bash"}, {"cwd", "/w"}, {"tool_input", {{"command", cmd}}}}, read, true);
+    };
+    assert(hook_ok(post + "/t/ok.json").empty());
+    assert(hook_ok(post + "/t/approve.json").empty());
+    assert(hook_ok(post + "/t/changes.json") == "a review's \"event\" must be \"COMMENT\" or \"APPROVE\" once, not \"REQUEST_CHANGES\"");
+    assert(hook_ok(post + "/t/twice.json") == "a review's \"event\" must be \"COMMENT\" or \"APPROVE\" once, not twice");
+    assert(hook_ok(post + "/t/none.json") == "a review's \"event\" must be \"COMMENT\" or \"APPROVE\" once, not missing");
+    assert(hook_ok("gh pr merge 12 --squash") == "gh pr merge is not allowed");
+    assert(!hook_ok("true; " + post + "/t/approve.json").empty());  // still one plain command
+  }
   assert(!hook("gh api repos/acme/core/pulls/12/reviews --input /t/approve.json").empty());  // --input: POST
   assert(!hook("gh api repos/acme/core/pulls/12/reviews/9/events -XPOST --input /t/approve.json").empty());
   assert(!hook("gh api repos/acme/core/pulls/12/reviews -f event=APPROVE").empty());

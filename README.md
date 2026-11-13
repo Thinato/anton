@@ -226,9 +226,11 @@ tools are the ones named, `dontAsk` denies anything not allowed, the allow
 rules are exact commands for this PR, `--setting-sources ""` keeps the
 PR's own `.claude/` settings (and yours) out, and `anton-llm
 --check-review`, a hook, refuses any review whose `event` isn't
-`"COMMENT"`. A draft-then-post pair, where you read the draft before a
-second key posts it, and the details are in
-[specs/04-plugin-llm.md](specs/04-plugin-llm.md).
+`"COMMENT"`. To let it approve PRs it finds nothing wrong with, give the
+hook `"args": ["--check-review", "--allow-approve"]` and tell it so in
+`system`; the approval is yours as far as GitHub is concerned. A
+draft-then-post pair, where you read the draft before a second key posts
+it, and the details are in [specs/04-plugin-llm.md](specs/04-plugin-llm.md).
 
 ## Develop
 
