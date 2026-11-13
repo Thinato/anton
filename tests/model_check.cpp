@@ -111,6 +111,8 @@ int main() {
   assert(st.prs.count(url) && st.prs[url].note == "## Review\nlooks fine");  // so does a note
   apply_line(st, R"({"pr":"o/r#1","note":"\tok\u001b[2J\r\n\n "})");
   assert(st.prs[url].note == "    ok[2J");  // tabs expanded, control characters and trailing space dropped
+  apply_line(st, R"({"pr":"o/r#1","note":"a\u009b2Jb\u0085c dé"})");
+  assert(st.prs[url].note == "a2Jbc dé");  // C1 controls (U+009B is CSI) too, not U+00A0 or é
   apply_line(st, R"({"pr":"o/r#1","note":" \n"})");
   assert(!st.prs.count(url));  // a blank note is no note
   apply_line(st, R"({"pr":"https://github.com/o/r/pull/1","lists":["code-review"]})");

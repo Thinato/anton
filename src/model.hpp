@@ -384,8 +384,11 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
         info.tags.push_back({str(t, "glyph"), str(t, "text"), str(t, "hint")});
   if (auto it = j.find("order"); it != j.end() && it->is_number()) info.order = it->get<double>();
   if (auto it = j.find("watch"); it != j.end() && it->is_boolean()) info.watch = it->get<bool>();
-  for (unsigned char c : str(j, "note")) {  // no control characters reach the terminal
-    if (c == '\t') info.note += "    ";
+  std::string raw = str(j, "note");
+  for (size_t i = 0; i < raw.size(); ++i) {  // no control characters reach the terminal
+    unsigned char c = raw[i];
+    if (c == 0xC2 && i + 1 < raw.size() && (static_cast<unsigned char>(raw[i + 1]) & 0xE0) == 0x80) ++i;  // C1: U+0080-009F
+    else if (c == '\t') info.note += "    ";
     else if (c == '\n' || (c >= 0x20 && c != 0x7f)) info.note += static_cast<char>(c);
   }
   while (!info.note.empty() && std::isspace(static_cast<unsigned char>(info.note.back()))) info.note.pop_back();

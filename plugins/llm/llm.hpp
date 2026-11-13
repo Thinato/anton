@@ -2,11 +2,16 @@
 // anton-llm's pure core: llm.json -> reviewers, a reviewer + PR -> argv, run
 // results -> the PR's plugin line. No I/O, so tests/llm_check.cpp drives it.
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <functional>
 #include <map>
+#include <optional>
+#include <regex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -18,18 +23,20 @@ namespace anton::llm {
 
 using nlohmann::json;
 using Vars = std::map<std::string, std::string>;
+using Fields = std::map<std::string, json>;  // a string or an object
 
 // One configured key: a command that runs an agent on a PR.
 struct Reviewer {
   std::string key, label, tag;
   std::string stdin_from;  // "" or "diff"
   std::string cwd;         // "" = the plugin's cwd
+  std::string checkout = "pr";  // with a clone in "repos": "pr" (a worktree of the head) or "as-is"
   int timeout = 600;       // seconds
   std::vector<std::string> command;
-  Vars fields;  // every string field, for {name}
+  Fields fields;  // every string or object field, for {name}
 };
 
-inline const std::set<std::string> kBuiltins = {"pr_url", "repo", "number", "note"};
+inline const std::set<std::string> kBuiltins = {"pr_url", "repo", "number", "note", "tmp", "repo_dir"};
 
 inline std::string config_path() {
   if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x) return std::string(x) + "/anton/llm.json";
@@ -58,8 +65,17 @@ inline bool is_ident(const std::string& s) {
 // nothing recurses. Built-in values (a note is agent output) are never
 // expanded. An unknown {name} stays as written and, at depth 0, is added to
 // `unknown`; text that isn't {identifier} (JSON in a prompt) is left alone.
-inline std::string subst(const std::string& s, const Vars& builtins, const Vars& fields, int depth = 0,
+// An object field goes in as compact JSON; at depth 0 its strings are
+// expanded first (depth 1), so a value can't break out of its string.
+inline std::string subst(const std::string& s, const Vars& builtins, const Fields& fields, int depth = 0,
                          std::set<std::string>* unknown = nullptr) {
+  std::function<json(const json&)> fill = [&](const json& j) {
+    if (j.is_string()) return json(subst(j.get<std::string>(), builtins, fields, 1));
+    json o = j;
+    if (o.is_structured())  // iterating a number yields the number itself
+      for (auto& v : o) v = fill(v);
+    return o;
+  };
   std::string out;
   for (size_t i = 0; i < s.size();) {
     bool braced = s.compare(i, 9, "${PR_URL}") == 0;
@@ -75,9 +91,10 @@ inline std::string subst(const std::string& s, const Vars& builtins, const Vars&
       continue;
     }
     if (auto b = builtins.find(name); b != builtins.end()) out += b->second;
-    else if (auto f = fields.find(name); f != fields.end())
-      out += depth == 0 ? subst(f->second, builtins, fields, 1) : f->second;
-    else {
+    else if (auto f = fields.find(name); f != fields.end()) {
+      if (f->second.is_string()) out += (depth == 0 ? fill(f->second) : f->second).get<std::string>();
+      else out += (depth == 0 ? fill(f->second) : f->second).dump(-1, ' ', false, json::error_handler_t::replace);
+    } else {
       out += s.substr(i, end - i + 1);
       if (unknown && depth == 0) unknown->insert(name);
     }
@@ -86,12 +103,16 @@ inline std::string subst(const std::string& s, const Vars& builtins, const Vars&
   return out;
 }
 
-inline Vars builtins(const std::string& url, const std::string& note) {
+// tmp: the run's own temp directory; repo_dir: the PR's checkout, or "".
+inline Vars builtins(const std::string& url, const std::string& note, const std::string& tmp = "",
+                     const std::string& repo_dir = "") {
   auto ref = parse_ref(url);
   return {{"pr_url", url},
           {"repo", ref ? ref->owner + "/" + ref->name : ""},
           {"number", ref ? std::to_string(ref->number) : ""},
-          {"note", note}};
+          {"note", note},
+          {"tmp", tmp},
+          {"repo_dir", repo_dir}};
 }
 
 inline std::vector<std::string> argv(const Reviewer& r, const Vars& b) {
@@ -100,10 +121,19 @@ inline std::vector<std::string> argv(const Reviewer& r, const Vars& b) {
   return out;
 }
 
-// Parses llm.json; returns "" or the first problem found.
-inline std::string parse_config(const std::string& text, std::vector<Reviewer>& out) {
+// Parses llm.json; returns "" or the first problem found. `repos` gets
+// "owner/name" (lowercase, as in a normalized URL) -> local clone.
+inline std::string parse_config(const std::string& text, std::vector<Reviewer>& out, Vars* repos = nullptr) {
   json j = json::parse(text, nullptr, false, true);  // allow comments
   if (j.is_discarded() || !j.is_object()) return "not a JSON object";
+  if (auto rp = j.find("repos"); rp != j.end()) {
+    if (!rp->is_object()) return "repos: want {\"owner/name\": \"path to a clone\"}";
+    for (auto& [k, v] : rp->items()) {
+      if (!v.is_string() || std::count(k.begin(), k.end(), '/') != 1)
+        return "repos: want {\"owner/name\": \"path to a clone\"}, not \"" + k + "\"";
+      if (repos) (*repos)[lower(k)] = expand_home(v.get<std::string>());
+    }
+  }
   auto rs = j.find("reviewers");
   if (rs == j.end() || !rs->is_array() || rs->empty()) return "reviewers: want a non-empty list";
   std::set<std::string> keys;
@@ -113,9 +143,9 @@ inline std::string parse_config(const std::string& text, std::vector<Reviewer>& 
     if (!v.is_object()) return where + ": not an object";
     Reviewer r;
     for (auto& [k, val] : v.items()) {
-      if (!val.is_string()) continue;
+      if (!val.is_string() && !val.is_object()) continue;
       if (kBuiltins.count(k)) return where + ": \"" + k + "\" is a built-in, pick another name";
-      r.fields[k] = val.get<std::string>();
+      r.fields[k] = val;
     }
     r.key = str(v, "key");
     if (r.key.size() != 1) return where + ": key must be one character";
@@ -128,6 +158,8 @@ inline std::string parse_config(const std::string& text, std::vector<Reviewer>& 
     r.stdin_from = str(v, "stdin");
     if (!r.stdin_from.empty() && r.stdin_from != "diff") return where + ": stdin must be \"diff\" or absent";
     r.cwd = expand_home(str(v, "cwd"));
+    if (std::string c = str(v, "checkout"); !c.empty()) r.checkout = c;
+    if (r.checkout != "pr" && r.checkout != "as-is") return where + ": checkout must be \"pr\" or \"as-is\"";
     if (auto t = v.find("timeout"); t != v.end()) {
       if (!t->is_number_integer() || t->get<long>() <= 0 || t->get<long>() > 86400)
         return where + ": timeout must be 1-86400 seconds";
@@ -208,6 +240,127 @@ inline std::string pr_line(const std::string& url, const PrState& st, const std:
     j["note"] = fit(note, rest < kMaxLine ? kMaxLine - rest : 0);
   }
   return dump();
+}
+
+// -- --check-review: a Claude Code PreToolUse hook on Bash ---------------------
+
+// cmd's words, split into simple commands at unquoted ; & | ( ) ` and
+// newlines. Quotes and backslashes are honoured; nothing is expanded.
+inline std::vector<std::vector<std::string>> shell_split(const std::string& cmd) {
+  std::vector<std::vector<std::string>> out(1);
+  std::string w;
+  bool word = false;
+  auto end = [&] {
+    if (word) out.back().push_back(w);
+    w.clear();
+    word = false;
+  };
+  for (size_t i = 0; i < cmd.size(); ++i) {
+    char c = cmd[i];
+    if (c == '\'') {
+      size_t e = std::min(cmd.find('\'', i + 1), cmd.size());
+      w += cmd.substr(i + 1, e - i - 1), i = e, word = true;
+    } else if (c == '"') {
+      for (++i; i < cmd.size() && cmd[i] != '"'; ++i) {
+        if (cmd[i] == '\\' && i + 1 < cmd.size() && std::string_view("\"\\$`\n").find(cmd[i + 1]) != std::string_view::npos) ++i;
+        w += cmd[i];
+      }
+      word = true;
+    } else if (c == '\\' && i + 1 < cmd.size()) {
+      w += cmd[++i], word = true;
+    } else if (c == ' ' || c == '\t') {
+      end();
+    } else if (std::string_view(";&|()`\n").find(c) != std::string_view::npos) {
+      end();
+      if (!out.back().empty()) out.emplace_back();
+    } else {
+      w += c, word = true;
+    }
+  }
+  end();
+  if (out.back().empty()) out.pop_back();
+  return out;
+}
+
+using ReadFile = std::function<std::optional<std::string>(const std::string&)>;
+
+// Why the Bash command cmd (run in cwd) must not run, or "". Blocks what can
+// approve, request changes, merge or close: `gh pr review` with those flags,
+// `gh pr merge|close`, `gh api graphql`, `gh api` writes to pulls/N/merge, and
+// a review POST (pulls/N/reviews, or .../reviews/ID/events) unless it is one
+// plain command whose --input file has "event": "COMMENT".
+inline std::string command_block(const std::string& cmd, const std::string& cwd, const ReadFile& read,
+                                 int depth = 0) {
+  for (auto& seg : shell_split(cmd)) {
+    for (auto& w : seg)  // sh -c '…', "$(…)": check what's inside too
+      if (depth < 3 && w.find_first_of(" \t\n;&|`") != std::string::npos)
+        if (std::string why = command_block(w, cwd, read, depth + 1); !why.empty()) return why;
+    size_t g = 0;
+    while (g < seg.size() && seg[g] != "gh" && !seg[g].ends_with("/gh")) ++g;
+    if (g == seg.size()) continue;
+    std::vector<std::string> a(seg.begin() + g + 1, seg.end()), pos;  // pos: subcommand words
+    for (size_t i = 0; i < a.size() && pos.size() < 2; ++i) {
+      if (a[i] == "-R" || a[i] == "--repo") ++i;
+      else if (!a[i].starts_with("-")) pos.push_back(a[i]);
+    }
+    pos.resize(2);
+    if (pos[0] == "pr" && (pos[1] == "merge" || pos[1] == "close")) return "gh pr " + pos[1] + " is not allowed";
+    if (pos[0] == "pr" && pos[1] == "review")
+      for (auto& w : a)
+        if (w.starts_with("--approve") || w.starts_with("--request-changes") ||
+            (w.size() > 1 && w[0] == '-' && w[1] != '-' && w.find_first_of("ar") != std::string::npos))
+          return "gh pr review may only comment, not approve or request changes";
+    if (pos[0] != "api") continue;
+
+    static const std::set<std::string> takes = {"-X", "--method", "-H", "--header", "-f", "--raw-field",
+                                                "-F", "--field", "--input", "-q", "--jq", "-t", "--template",
+                                                "--hostname", "--cache", "-p", "--preview"};
+    std::string method, endpoint, input;
+    bool fields = false, has_input = false;
+    for (size_t i = std::find(a.begin(), a.end(), "api") - a.begin() + 1; i < a.size(); ++i) {
+      std::string f = a[i], v;
+      if (size_t eq = f.find('='); f.starts_with("--") && eq != std::string::npos) v = f.substr(eq + 1), f.resize(eq);
+      else if (f.size() > 2 && f[1] != '-' && takes.count(f.substr(0, 2))) v = f.substr(2), f.resize(2);  // -XPOST
+      else if (takes.count(f) && i + 1 < a.size()) v = a[++i];
+      if (f == "-X" || f == "--method") {
+        method = v;
+        for (auto& ch : method) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+      }
+      else if (f == "--input") input = v, has_input = true;
+      else if (f == "-f" || f == "-F" || f == "--field" || f == "--raw-field") fields = true;
+      else if (!f.starts_with("-") && endpoint.empty()) endpoint = f;
+    }
+    if (method.empty()) method = fields || has_input ? "POST" : "GET";  // what gh does
+    endpoint = endpoint.substr(0, endpoint.find('?'));
+    auto is = [&](const char* re) { return std::regex_search(endpoint, std::regex(re, std::regex::icase)); };
+    if (is(R"((^|/)graphql/?$)")) return "gh api graphql is not allowed (it can approve and merge)";
+    if (method != "GET" && is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/merge/?$)")) return "merging is not allowed";
+    if (method != "POST" || !is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/reviews(/[^/]+/events)?/?$)")) continue;
+    if (depth > 0 || cmd.find_first_of(";&|<>()`$\n") != std::string::npos)
+      return "post a review as one plain gh api command, nothing around it";
+    if (fields || input.empty() || input == "-") return "post a review with --input FILE and no -f/-F fields";
+    std::string path = input[0] == '/' ? input : cwd + "/" + input;
+    auto text = read(path);
+    if (!text) return "can't read " + path;
+    int events = 0;  // {"event": "COMMENT", "event": "APPROVE"}: which one wins is the server's call
+    json body = json::parse(*text, [&](int d, json::parse_event_t e, json& k) {
+      if (e == json::parse_event_t::key && d == 1 && k == "event") ++events;
+      return true;
+    }, false);
+    std::string event = body.is_object() ? str(body, "event") : "";
+    if (events != 1 || event != "COMMENT")
+      return "a review's \"event\" must be \"COMMENT\" once, not " +
+             (events > 1 ? "twice" : event.empty() ? "missing" : "\"" + event + "\"");
+  }
+  return "";
+}
+
+// The verdict on a PreToolUse hook's stdin: "" lets the call run.
+inline std::string review_block(const json& in, const ReadFile& read) {
+  if (!in.is_object()) return "can't parse the hook input";
+  if (str(in, "tool_name") != "Bash") return "";
+  auto ti = in.find("tool_input");
+  return command_block(ti != in.end() && ti->is_object() ? str(*ti, "command") : "", str(in, "cwd"), read);
 }
 
 }  // namespace anton::llm

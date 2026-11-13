@@ -144,12 +144,15 @@ commands, one per key, in `~/.config/anton/llm.json`.
 {
   "reviewers": [
     {
-      "key": "R", "tag": "haiku", "stdin": "diff",
-      "prompt": "Review the diff on stdin for $PR_URL. Only flag real bugs.",
-      "command": ["claude", "-p", "--model", "haiku", "{prompt}"]
+      "key": "R", "tag": "haiku", "stdin": "diff", "checkout": "as-is",
+      "prompt": "Review the diff on stdin for {repo}#{number}. Only flag real bugs. Be terse.",
+      "command": [
+        "claude", "-p", "--model", "haiku", "--tools", "", "--setting-sources", "",
+        "--no-session-persistence", "{prompt}"
+      ]
     },
     {
-      "key": "D", "tag": "deepseek", "stdin": "diff",
+      "key": "S", "tag": "deepseek", "stdin": "diff",
       "system": "You review pull requests. Be terse.",
       "prompt": "Review this diff of {repo}#{number}.",
       "command": ["llm", "-m", "deepseek-chat", "-s", "{system}", "{prompt}"]
@@ -165,10 +168,67 @@ commands, one per key, in `~/.config/anton/llm.json`.
 Press `R` on a PR and its tags show `🤖 haiku…` while it runs, then
 `🤖 haiku`; `n` reads the review. `{name}` in a command is replaced by the
 reviewer's field of that name, or by `{pr_url}` (also `$PR_URL`), `{repo}`,
-`{number}` and `{note}` (the last review, so another key can post it).
-`"stdin": "diff"` pipes in `gh pr diff`. A run that fails or passes its
-`timeout` (600s) shows `🤖 haiku failed` and the error in the note. Details
-are in [specs/04-plugin-llm.md](specs/04-plugin-llm.md).
+`{number}`, `{note}` (the last review, so another key can post it), `{tmp}`
+(a temp directory for this run) and `{repo_dir}`. `"stdin": "diff"` pipes in
+`gh pr diff`. A run that fails or passes its `timeout` (600s) shows
+`🤖 haiku failed` and the error in the note.
+
+With `"repos": {"owner/name": "~/path/to/clone"}`, a PR of that repo is
+reviewed in a temporary `git worktree` of its head (`"checkout": "pr"`, the
+default), or in your clone as it is (`"as-is"`). The worktree is detached
+and removed afterwards; your clone's branch and files aren't touched.
+
+An agent can post its review on GitHub itself. Here Haiku reads the PR's
+code, writes a review with inline comments and `suggestion` blocks, and
+posts it as a comment-only review:
+
+```json
+{
+  "repos": {"acme/core": "~/src/core"},
+  "reviewers": [
+    {
+      "key": "H", "tag": "haiku", "label": "Haiku reviews on GitHub", "timeout": 900,
+      "prompt": "Review {pr_url} and post your review on it.",
+      "system": "You review a GitHub pull request and post the review on GitHub yourself.\n\nThe current directory is a checkout of the PR's head: read code there with Read, Grep and Glob. The only commands you can run are `gh pr view {pr_url} ...`, `gh pr diff {pr_url} ...`, `gh api repos/{repo}/pulls/{number}/files` and the post command below. Anything else is refused, so don't look for other ways.\n\n1. Get the diff (`gh pr diff {pr_url}`) and the head commit (`gh pr view {pr_url} --json headRefOid`).\n2. Read the code around the changes where you need context. Only flag real problems: bugs, security holes, missed edge cases, docs that say the wrong thing. No praise, no style nits.\n3. Write the review to {tmp}/review.json:\n   {\"commit_id\": \"<headRefOid>\", \"event\": \"COMMENT\", \"body\": \"<summary>\", \"comments\": [{\"path\": \"src/a.cpp\", \"line\": 42, \"side\": \"RIGHT\", \"body\": \"...\"}]}\n   - \"event\" is always \"COMMENT\". Never approve or request changes.\n   - \"line\" is a line of the new file inside a hunk of the diff; any other line makes GitHub reject the whole review. For several lines add \"start_line\" (same hunk) and \"start_side\": \"RIGHT\".\n   - When you have a concrete fix, end the comment with a ```suggestion block holding the exact new text of those lines, indented as in the file. Otherwise just say what is wrong.\n   - \"body\" is a summary of two or three sentences. If nothing is wrong, post no comments and say so.\n4. Post it with exactly this command: gh api --method POST repos/{repo}/pulls/{number}/reviews --input {tmp}/review.json\n   If GitHub answers 422, fix review.json and post again.\n5. End with a short markdown summary of what you posted: the review's html_url from the response, then one line per comment (path:line and the gist).",
+      "settings": {
+        "permissions": {
+          "allow": [
+            "Bash(gh pr view {pr_url} *)",
+            "Bash(gh pr diff {pr_url} *)",
+            "Bash(gh api repos/{repo}/pulls/{number}/files)",
+            "Bash(gh api --method POST repos/{repo}/pulls/{number}/reviews --input {tmp}/review.json)",
+            "Edit(/{tmp}/review.json)"
+          ],
+          "deny": [
+            "Bash(gh pr comment *--body-file*)", "Bash(gh pr comment *-F*)",
+            "Bash(gh pr comment *--edit-last*)", "Bash(gh pr comment *--delete-last*)",
+            "Bash(gh api graphql *)", "Bash(gh extension *)", "Bash(gh alias *)",
+            "Bash(npx *)", "Bash(docker *)"
+          ],
+          "blockReadsOutsideWorkingDirectories": true
+        },
+        "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+          {"type": "command", "command": "anton-llm", "args": ["--check-review"], "onFailure": "block"}
+        ]}]}
+      },
+      "command": ["claude", "-p", "--model", "haiku",
+                  "--setting-sources", "", "--settings", "{settings}", "--strict-mcp-config",
+                  "--tools", "Read,Grep,Glob,Bash,Write", "--permission-mode", "dontAsk",
+                  "--max-turns", "40", "--max-budget-usd", "1", "--no-session-persistence",
+                  "--append-system-prompt", "{system}", "{prompt}"]
+    }
+  ]
+}
+```
+
+It can't approve, request changes, merge, push or edit your files: its only
+tools are the ones named, `dontAsk` denies anything not allowed, the allow
+rules are exact commands for this PR, `--setting-sources ""` keeps the
+PR's own `.claude/` settings (and yours) out, and `anton-llm
+--check-review`, a hook, refuses any review whose `event` isn't
+`"COMMENT"`. A draft-then-post pair, where you read the draft before a
+second key posts it, and the details are in
+[specs/04-plugin-llm.md](specs/04-plugin-llm.md).
 
 ## Develop
 
