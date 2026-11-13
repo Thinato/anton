@@ -327,6 +327,7 @@ struct PrInfo {
   std::vector<Tag> tags;
   std::optional<double> order;  // list views' default sort: higher first
   bool watch = false;            // re-fetch every watch_seconds (e.g. you're reviewing it)
+  std::string note;              // longer text `n` opens, e.g. an LLM's review
 };
 
 // A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
@@ -383,7 +384,12 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
         info.tags.push_back({str(t, "glyph"), str(t, "text"), str(t, "hint")});
   if (auto it = j.find("order"); it != j.end() && it->is_number()) info.order = it->get<double>();
   if (auto it = j.find("watch"); it != j.end() && it->is_boolean()) info.watch = it->get<bool>();
-  if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch)
+  for (unsigned char c : str(j, "note")) {  // no control characters reach the terminal
+    if (c == '\t') info.note += "    ";
+    else if (c == '\n' || (c >= 0x20 && c != 0x7f)) info.note += static_cast<char>(c);
+  }
+  while (!info.note.empty() && std::isspace(static_cast<unsigned char>(info.note.back()))) info.note.pop_back();
+  if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty())
     st.prs.erase(url);  // {"pr": url} alone: the plugin has nothing to say about it
   else
     st.prs[url] = std::move(info);

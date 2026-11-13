@@ -29,7 +29,7 @@ namespace {
 
 using namespace ftxui;
 
-enum class Mode { Normal, Query, Picker, Help };
+enum class Mode { Normal, Query, Picker, Help, Note };
 
 std::time_t now() { return std::time(nullptr); }
 
@@ -72,6 +72,8 @@ struct Ui {
   std::string query_buf, pick_buf;
   int query_cursor = 0, pick_sel = 0;
   bool pick_repo = false;
+  std::string note_url;  // the PR whose notes the Note overlay shows
+  int note_scroll = 0;   // first line shown
   Component query_input, pick_input;
 
   // Per plugin. Long-running ("exit") plugins fold lines into `live` as they
@@ -392,6 +394,21 @@ struct Ui {
     return out;
   }
 
+  // Every plugin's note on a PR: (plugin name, text).
+  std::vector<std::pair<std::string, std::string>> notes_of(const std::string& url) const {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (size_t i = 0; i < live.size(); ++i)
+      if (auto it = live[i].prs.find(url); it != live[i].prs.end() && !it->second.note.empty())
+        out.emplace_back(cfg.plugins[i].name, it->second.note);
+    return out;
+  }
+
+  bool has_note(const std::string& url) const {
+    for (auto& st : live)
+      if (auto it = st.prs.find(url); it != st.prs.end() && !it->second.note.empty()) return true;
+    return false;
+  }
+
   // -- rows -------------------------------------------------------------------
 
   // nullopt when this view has no data yet (search never answered).
@@ -569,6 +586,7 @@ struct Ui {
       for (auto& t : it->second.tags)
         parts.push_back(text(tag + t.glyph + " " + t.text + (t.hint.empty() ? "" : " — " + t.hint)));
     }
+    if (has_note(p.url)) parts.push_back(text("  n read note") | color(Color::Cyan));
     return hbox(std::move(parts));
   }
 
@@ -620,12 +638,79 @@ struct Ui {
            size(WIDTH, GREATER_THAN, 40) | clear_under | center;
   }
 
+  // Word wrap to w columns, by display width. A word wider than w gets a row
+  // of its own and is cut at the edge.
+  static std::vector<std::string> wrap(const std::string& s, int w) {
+    std::vector<std::string> out;
+    std::string cur;
+    size_t at = 0;
+    while (at < s.size()) {
+      size_t sp = s.find(' ', at);
+      std::string word = s.substr(at, sp == std::string::npos ? std::string::npos : sp - at);
+      at = sp == std::string::npos ? s.size() : sp + 1;
+      if (word.empty()) continue;
+      if (!cur.empty() && string_width(cur) + 1 + string_width(word) > w) {
+        out.push_back(cur);
+        cur.clear();
+      }
+      cur += (cur.empty() ? "" : " ") + word;
+    }
+    if (!cur.empty() || out.empty()) out.push_back(cur);
+    return out;
+  }
+
+  // A plugin's note, usually markdown: prose wrapped (indent kept), headings
+  // bold, code blocks as they are. Wrapped here rather than by paragraph(), so
+  // every element is one row and scrolling can reach the end of a long one.
+  Element render_note() {
+    auto notes = notes_of(note_url);
+    auto term = Terminal::Size();
+    int w = std::min(100, term.dimx - 4), h = term.dimy - 4;
+    int tw = std::max(10, w - 2), th = std::max(1, h - 3);  // inside the border, above the status line
+    Elements l;
+    for (auto& [name, body] : notes) {
+      if (notes.size() > 1) l.push_back(text("[" + name + "]") | bold | color(Color::Cyan));
+      bool code = false;
+      size_t at = 0;
+      while (at <= body.size()) {
+        size_t nl = body.find('\n', at);
+        std::string line = body.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? body.size() + 1 : nl + 1;
+        size_t indent = std::min(line.find_first_not_of(' '), line.size());
+        bool fence = line.compare(indent, 3, "```") == 0;
+        if (fence) code = !code;
+        if (code || fence) {
+          l.push_back(text(line) | dim);  // y copies what doesn't fit
+          continue;
+        }
+        size_t hashes = line.find_first_not_of('#');
+        bool heading = hashes > 0 && hashes != std::string::npos && line[hashes] == ' ';
+        std::string pad(indent, ' ');
+        for (auto& row : wrap(line.substr(indent), std::max(10, tw - static_cast<int>(indent))))
+          l.push_back(heading ? text(row) | bold : text(pad + row));
+      }
+    }
+    if (l.empty()) l.push_back(text("(the note is gone)") | dim);
+    int n = static_cast<int>(l.size());
+    note_scroll = std::clamp(note_scroll, 0, std::max(0, n - th));
+    Elements shown(l.begin() + note_scroll, l.begin() + std::min(n, note_scroll + th));
+    std::string title = note_url;
+    if (auto c = cache.find(note_url); c != cache.end())
+      title = c->second.repo + "#" + std::to_string(c->second.number) + "  " + shown_title(c->second.title);
+    std::string where = n <= th ? "" : std::to_string(100 * std::min(n, note_scroll + th) / n) + "%   ";
+    return window(text(" " + title + " "),
+                  vbox({vbox(std::move(shown)) | flex,
+                        text(where + "j/k scroll  g/G top/end  y copy  esc close") | dim})) |
+           size(WIDTH, EQUAL, w) | size(HEIGHT, EQUAL, h) | clear_under | center;
+  }
+
   Element render_help() {
     Elements l = {
         text("keys") | bold,
         text("  j/k ↑/↓ g/G   move            ⏎  open in browser   y  copy URL"),
         text("  r             refresh         /  edit query        s  cycle sort"),
         text("  o / p         pick org / repo x  clear org/repo    1-9 Tab  views"),
+        text("  n             read a plugin's note on the PR (an LLM review, say)"),
         text("  q             quit            ?  this help (any key closes)"),
         text(""),
         text("view: " + views[active].name + "   query: " + effective(views[active])) | dim,
@@ -678,6 +763,7 @@ struct Ui {
                          render_footer()});
     if (mode == Mode::Picker) return dbox({main, render_picker()});
     if (mode == Mode::Help) return dbox({main, render_help()});
+    if (mode == Mode::Note) return dbox({main, render_note()});
     return main;
   }
 
@@ -710,11 +796,11 @@ struct Ui {
     flash("opening " + url);
   }
 
-  void copy(const std::string& url) {
-    std::thread([this, url] {
+  void copy(const std::string& s) {
+    std::thread([this, s] {
       for (auto argv : std::vector<std::vector<std::string>>{
                {"pbcopy"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"}})
-        if (run(argv, url).code == 0) return post([this] { flash("copied"); });
+        if (run(argv, s).code == 0) return post([this] { flash("copied"); });
       post([this] { flash("no clipboard tool (pbcopy, wl-copy, xclip)"); });
     }).detach();
   }
@@ -729,6 +815,22 @@ struct Ui {
 
     if (mode == Mode::Help) {
       mode = Mode::Normal;
+      return true;
+    }
+    if (mode == Mode::Note) {  // render() clamps the scroll
+      if (e == Event::Escape || e == Event::Character('q') || e == Event::Character('n')) mode = Mode::Normal;
+      else if (e == Event::Character('j') || e == Event::ArrowDown) ++note_scroll;
+      else if (e == Event::Character('k') || e == Event::ArrowUp) --note_scroll;
+      else if (e == Event::PageDown || e == Event::Character(' ')) note_scroll += 10;
+      else if (e == Event::PageUp) note_scroll -= 10;
+      else if (e == Event::Character('g') || e == Event::Home) note_scroll = 0;
+      else if (e == Event::Character('G') || e == Event::End) note_scroll = 1 << 30;
+      else if (e == Event::Character('y')) {
+        std::string all;
+        for (auto& [name, body] : notes_of(note_url)) all += (all.empty() ? "" : "\n\n") + body;
+        if (all.empty()) flash("the note is gone");
+        else copy(all);
+      }
       return true;
     }
     if (mode == Mode::Query) {
@@ -818,6 +920,14 @@ struct Ui {
       switch_view((active + views.size() - 1) % views.size());
     } else if (e == Event::Character('?')) {
       mode = Mode::Help;
+    } else if (e == Event::Character('n')) {
+      if (cur && has_note(cur->url)) {
+        note_url = cur->url;
+        note_scroll = 0;
+        mode = Mode::Note;
+      } else if (cur) {
+        flash("no note on this PR");
+      }
     } else if (e.is_character() && e.character().size() == 1 && e.character()[0] >= '1' &&
                e.character()[0] <= '9') {
       switch_view(static_cast<size_t>(e.character()[0] - '1'));
