@@ -26,11 +26,12 @@ using namespace anton::llm;
 
 static const char* kUsage =
     "usage: anton-llm [--config PATH]\n"
-    "       anton-llm --check-review   (a Claude Code PreToolUse hook)\n"
+    "       anton-llm --check-review [--allow-approve]   (a Claude Code PreToolUse hook)\n"
     "\n"
     "  --config PATH   default $XDG_CONFIG_HOME/anton/llm.json, or ~/.config/anton/llm.json\n"
     "  --check-review  read a hook's JSON on stdin; exit 2 for a call that could approve,\n"
-    "                  request changes, merge or close, 0 for anything else\n";
+    "                  request changes, merge or close, 0 for anything else\n"
+    "  --allow-approve  ...except a review POST whose \"event\" is \"APPROVE\"\n";
 
 static constexpr size_t kMaxRuns = 64;            // at once, across PRs and reviewers
 static constexpr size_t kMaxDiff = 200 * 1024;    // piped to "stdin": "diff"
@@ -237,6 +238,7 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--config" && i + 1 < argc) path = argv[++i];
     else if (a == "--check-review") {
+      bool approve = i + 1 < argc && std::string(argv[i + 1]) == "--allow-approve";
       std::stringstream in;
       in << std::cin.rdbuf();
       std::string why = review_block(json::parse(in.str(), nullptr, false), [](const std::string& p) {
@@ -244,7 +246,7 @@ int main(int argc, char** argv) {
         std::stringstream ss;
         ss << f.rdbuf();
         return f ? std::optional(ss.str()) : std::nullopt;
-      });
+      }, approve);
       if (why.empty()) return 0;
       std::fprintf(stderr, "anton-llm: %s\n", why.c_str());  // exit 2: Claude Code blocks the call, Claude reads this
       return 2;

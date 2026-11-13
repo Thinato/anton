@@ -290,13 +290,14 @@ using ReadFile = std::function<std::optional<std::string>(const std::string&)>;
 // pulls/N and issues/N themselves (a PATCH closes or edits the PR), any other
 // write under pulls/N/reviews (dismissals), and
 // a review POST (pulls/N/reviews, or .../reviews/ID/events) unless it is one
-// plain command whose --input file has "event": "COMMENT".
+// plain command whose --input file has "event": "COMMENT" (or "APPROVE", with
+// allow_approve: --check-review --allow-approve).
 inline std::string command_block(const std::string& cmd, const std::string& cwd, const ReadFile& read,
-                                 int depth = 0) {
+                                 bool allow_approve = false, int depth = 0) {
   for (auto& seg : shell_split(cmd)) {
     for (auto& w : seg)  // sh -c '…', "$(…)": check what's inside too
       if (depth < 3 && w.find_first_of(" \t\n;&|`") != std::string::npos)
-        if (std::string why = command_block(w, cwd, read, depth + 1); !why.empty()) return why;
+        if (std::string why = command_block(w, cwd, read, allow_approve, depth + 1); !why.empty()) return why;
     size_t g = 0;
     while (g < seg.size() && seg[g] != "gh" && !seg[g].ends_with("/gh")) ++g;
     if (g == seg.size()) continue;
@@ -355,19 +356,19 @@ inline std::string command_block(const std::string& cmd, const std::string& cwd,
       return true;
     }, false);
     std::string event = body.is_object() ? str(body, "event") : "";
-    if (events != 1 || event != "COMMENT")
-      return "a review's \"event\" must be \"COMMENT\" once, not " +
+    if (events != 1 || (event != "COMMENT" && !(allow_approve && event == "APPROVE")))
+      return std::string("a review's \"event\" must be \"COMMENT\"") + (allow_approve ? " or \"APPROVE\"" : "") + " once, not " +
              (events > 1 ? "twice" : event.empty() ? "missing" : "\"" + event + "\"");
   }
   return "";
 }
 
 // The verdict on a PreToolUse hook's stdin: "" lets the call run.
-inline std::string review_block(const json& in, const ReadFile& read) {
+inline std::string review_block(const json& in, const ReadFile& read, bool allow_approve = false) {
   if (!in.is_object()) return "can't parse the hook input";
   if (str(in, "tool_name") != "Bash") return "";
   auto ti = in.find("tool_input");
-  return command_block(ti != in.end() && ti->is_object() ? str(*ti, "command") : "", str(in, "cwd"), read);
+  return command_block(ti != in.end() && ti->is_object() ? str(*ti, "command") : "", str(in, "cwd"), read, allow_approve);
 }
 
 }  // namespace anton::llm
