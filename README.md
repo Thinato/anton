@@ -55,6 +55,7 @@ takes works here.
 | `s` | sort: updated, created, size, repo |
 | `1`–`9` `Tab` | switch tab |
 | `r` | refresh (also automatic, every 2 min) |
+| `n` | read a plugin's note on the PR, like an LLM review |
 | `?` | help, including keys plugins add |
 
 `anton --query 'repo:me/thing is:open'` opens a single ad-hoc tab.
@@ -111,7 +112,7 @@ echo '{"pr": "https://github.com/me/thing/pull/42", "tags": [{"glyph": "🔥", "
 ```
 
 A plugin can put PRs on a list (which a tab can show), set a custom STATE,
-add tags, and register keys. Long-running plugins also get a stdin, where
+add tags, attach a note you read with `n`, and register keys. Long-running plugins also get a stdin, where
 anton sends the keys you pressed and your approvals. The protocol is in
 [specs/02-plugins.md](specs/02-plugins.md).
 

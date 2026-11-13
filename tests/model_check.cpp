@@ -107,8 +107,14 @@ int main() {
   assert(st.prs[url].order == 1700000000.5 && !st.prs[url].watch);
   apply_line(st, R"({"pr":"o/r#1","watch":true})");
   assert(st.prs.count(url) && st.prs[url].watch);  // watch alone keeps the PR
+  apply_line(st, R"({"pr":"o/r#1","note":"## Review\nlooks fine"})");
+  assert(st.prs.count(url) && st.prs[url].note == "## Review\nlooks fine");  // so does a note
+  apply_line(st, R"({"pr":"o/r#1","note":"\tok\u001b[2J\r\n\n "})");
+  assert(st.prs[url].note == "    ok[2J");  // tabs expanded, control characters and trailing space dropped
+  apply_line(st, R"({"pr":"o/r#1","note":" \n"})");
+  assert(!st.prs.count(url));  // a blank note is no note
   apply_line(st, R"({"pr":"https://github.com/o/r/pull/1","lists":["code-review"]})");
-  assert(!st.prs[url].status && st.prs[url].tags.empty());  // omitted = none
+  assert(!st.prs[url].status && st.prs[url].tags.empty() && st.prs[url].note.empty());  // omitted = none
   apply_line(st, R"({"health":"error","text":"expired"})");
   assert(st.health == "error" && st.health_text == "expired");
   apply_line(st, R"({"actions":[{"id":"review","key":"v","label":"toggle"},{"id":"x","key":"vv"}]})");

@@ -83,6 +83,31 @@ TITLES = {
 }
 
 
+# What an LLM reviewer plugin would attach (`n` opens it).
+NOTES = {
+    4812: """## Review: skip the team step for single-seat plans
+
+**Verdict:** fine to merge after one fix. The change is small and well tested, and the onboarding flow reads better without the team step for people who will never invite anyone; the only real problem is how trial plans report their seat count, which slips past the new check.
+
+### Problems
+1. `onboarding/steps.ts:48` checks `plan.seats === 1`, but trial plans report
+   `seats: null` until checkout, so trial users with one seat still see the
+   team step. Use `(plan.seats ?? 1) <= 1`.
+2. The new `skipTeamStep` flag is never reset when someone upgrades mid-flow;
+   they land on billing with no team.
+
+### Nits
+- `StepList` re-renders on every keystroke now that `steps` is built inline:
+
+```ts
+const steps = useMemo(() => buildSteps(plan), [plan]);
+```
+
+- The test names say "skips" but assert the step count; name the behavior.
+""",
+}
+
+
 def iso(t):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
@@ -156,6 +181,9 @@ def plugin():
             line["status"] = {"glyph": "⚙", "text": "queued"}
         if state == "ready":
             line["status"] = {"glyph": "💬", "text": "Ready?"}
+        if num in NOTES:
+            line["note"] = NOTES[num]
+            line.setdefault("tags", []).append({"glyph": "🤖", "text": "haiku"})
         if len(line) > 1:
             out(line)
     out({"health": "ok"})

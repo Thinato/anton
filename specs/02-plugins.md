@@ -4,15 +4,16 @@ A plugin is **any executable that prints JSON lines to stdout**. anton starts
 it, reads its lines, and uses what it says about PRs. That is the whole
 contract — no SDK, no library, no socket, any language.
 
-A plugin can say three things about a PR:
+A plugin can say four things about a PR:
 
 | | what it does in anton | example |
 | --- | --- | --- |
 | **lists** | puts the PR on a named list; a *list view* shows that list as a tab | "posted to `#code-review`" |
 | **status** | a custom value for the STATE column | `⚙ queued` from `#deploy-gogogo` |
 | **tags** | small annotations in the TAGS column | `👀 alice` |
+| **note** | longer text you open with `n` | an LLM's review |
 
-All three are optional, and all three are opt-in for the user: nothing a
+All of them are optional, and all of them are opt-in for the user: nothing a
 plugin says is visible unless the plugin is configured, and lists only show if
 a view points at them. People without a Slack, or without a deploy queue, never
 see any of it.
@@ -72,6 +73,7 @@ shown in the `?` overlay for debugging.
 | `watch` | optional `true`: anton re-fetches this PR every `watch_seconds` (15) while it's open, e.g. one you're reviewing. Keep it to a handful. |
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
+| `note` | optional longer text, e.g. an LLM's review of the PR. `n` opens it in a scrollable overlay; the detail line says `n read note` when there is one. Markdown is shown as written, with prose wrapped, headings bold and code blocks kept as they are. Like everything else it must fit the 64 KiB line. |
 
 **State, not deltas.** Every `pr` line is the *complete* truth for
 (plugin, PR) and replaces the previous one; an omitted field means "none"
@@ -147,7 +149,10 @@ re-sends the PR's `pr` line. anton never updates plugin state on its own.
 - **TAGS**: tags from all plugins, plugin order from config, then tag order.
   `glyph text`, joined by space; overflow becomes `+N` → `👀 alice +1`.
 - **Detail line** under the selected row: every tag and status as
-  `[plugin] glyph text — hint`.
+  `[plugin] glyph text — hint`, then `n read note` if a plugin attached one.
+- **Note overlay** (`n`): every plugin's note on the selected PR, headed
+  `[plugin]` when there's more than one. `j`/`k`, `space`/PgUp/PgDn, `g`/`G`
+  scroll; `y` copies the text; `esc`, `q` or `n` closes.
 
 ## Writing a plugin — minimal example
 
