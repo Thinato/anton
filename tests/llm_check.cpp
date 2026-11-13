@@ -97,5 +97,97 @@ int main() {
   std::string cut = fit(multi, 200);
   assert(json(cut).dump().size() <= 200 && cut.find("\n\n[truncated]") % 2 == 0);
 
+  // {tmp} and {repo_dir}; an object field goes in as JSON, its strings filled in and escaped
+  rs.clear();
+  Vars repos;
+  e = parse_config(R"J({
+    "repos": {"Acme/Core": "~/src/core"},
+    "reviewers": [{"key": "H", "checkout": "as-is", "x": "in {tmp}",
+      "settings": {"permissions": {"allow": ["Edit(/{tmp}/review.json)", "Bash(gh pr view {pr_url} *)"]},
+                   "n": "{note}", "x": "{x}", "k": 1},
+      "command": ["claude", "--settings", "{settings}", "{repo_dir}", "{tmp}/review.json", "{x}"]}]})J",
+                   rs, &repos);
+  assert(e.empty() && rs[0].checkout == "as-is");
+  assert(repos.size() == 1 && repos["acme/core"] == "/home/octocat/src/core");
+  a = argv(rs[0], builtins(PR, "say \"hi\" {tmp}", "/private/tmp/t1", "/private/tmp/t1/pr"));
+  assert(a[2] == R"J({"k":1,"n":"say \"hi\" {tmp}","permissions":{"allow":["Edit(//private/tmp/t1/review.json)",)J"
+                 R"J("Bash(gh pr view https://github.com/acme/core/pull/12 *)"]},"x":"in {tmp}"})J");
+  assert(a[3] == "/private/tmp/t1/pr" && a[4] == "/private/tmp/t1/review.json" && a[5] == "in /private/tmp/t1");
+  assert(argv(rs[0], builtins(PR, ""))[3].empty());  // no clone: {repo_dir} is ""
+  assert(err_of(R"({"reviewers": [{"key": "R", "command": ["x"]}]})").empty());
+  assert(err_of(R"({"reviewers": [{"key": "R", "checkout": "head", "command": ["x"]}]})") ==
+         "reviewer R: checkout must be \"pr\" or \"as-is\"");
+  assert(err_of(R"({"reviewers": [{"key": "R", "tmp": "x", "command": ["x"]}]})") ==
+         "reviewers[0]: \"tmp\" is a built-in, pick another name");
+  assert(err_of(R"({"repos": {"core": "~/src/core"}, "reviewers": [{"key": "R", "command": ["x"]}]})") ==
+         "repos: want {\"owner/name\": \"path to a clone\"}, not \"core\"");
+  std::vector<Reviewer> one;
+  parse_config(R"({"reviewers": [{"key": "R", "command": ["x"]}]})", one);
+  assert(one[0].checkout == "pr");  // the default
+
+  // --check-review: a PreToolUse hook's stdin -> "" (run it) or why not
+  std::map<std::string, std::string> files = {
+      {"/t/ok.json", R"({"commit_id": "abc", "event": "COMMENT", "body": "x", "comments": []})"},
+      {"/t/approve.json", R"({"event": "APPROVE", "body": "lgtm"})"},
+      {"/t/changes.json", R"({"event": "REQUEST_CHANGES"})"},
+      {"/t/none.json", R"({"body": "pending until someone submits it"})"},
+      {"/t/twice.json", R"({"event": "COMMENT", "event": "APPROVE"})"},
+      {"/t/nested.json", R"({"body": "x", "comments": [{"event": "x"}], "event": "COMMENT"})"},
+      {"/w/rel.json", R"({"event": "COMMENT"})"},
+  };
+  ReadFile read = [&](const std::string& p) -> std::optional<std::string> {
+    auto it = files.find(p);
+    return it == files.end() ? std::nullopt : std::optional(it->second);
+  };
+  auto hook = [&](const std::string& cmd) {
+    return review_block({{"hook_event_name", "PreToolUse"}, {"tool_name", "Bash"}, {"cwd", "/w"},
+                         {"tool_input", {{"command", cmd}, {"description", "x"}}}},
+                        read);
+  };
+  const std::string post = "gh api --method POST repos/acme/core/pulls/12/reviews --input ";
+  assert(hook(post + "/t/ok.json").empty());
+  assert(hook(post + "rel.json").empty());  // relative to the hook's cwd
+  assert(hook(post + "/t/nested.json").empty());
+  assert(hook("gh api -X POST /repos/acme/core/pulls/12/reviews --input=/t/ok.json").empty());
+  assert(hook(post + "/t/approve.json") == "a review's \"event\" must be \"COMMENT\" once, not \"APPROVE\"");
+  assert(hook(post + "/t/changes.json") == "a review's \"event\" must be \"COMMENT\" once, not \"REQUEST_CHANGES\"");
+  assert(hook(post + "/t/none.json") == "a review's \"event\" must be \"COMMENT\" once, not missing");
+  assert(hook(post + "/t/twice.json") == "a review's \"event\" must be \"COMMENT\" once, not twice");
+  assert(hook(post + "/t/missing.json") == "can't read /t/missing.json");
+  assert(!hook("gh api repos/acme/core/pulls/12/reviews --input /t/approve.json").empty());  // --input: POST
+  assert(!hook("gh api repos/acme/core/pulls/12/reviews/9/events -XPOST --input /t/approve.json").empty());
+  assert(!hook("gh api repos/acme/core/pulls/12/reviews -f event=APPROVE").empty());
+  assert(!hook(post + "/t/ok.json -f event=APPROVE").empty());
+  assert(!hook(post + "-").empty());
+  // the file can't change between the check and the call
+  assert(!hook("echo '{\"event\":\"APPROVE\"}' > /t/ok.json && " + post + "/t/ok.json").empty());
+  assert(!hook("sh -c '" + post + "/t/ok.json'").empty());
+  assert(hook("gh pr review --approve " + PR) == "gh pr review may only comment, not approve or request changes");
+  assert(!hook("gh pr review " + PR + " -a").empty());
+  assert(!hook("gh pr review -r -b 'needs work' " + PR).empty());
+  assert(!hook("gh pr review --request-changes=true " + PR).empty());
+  assert(!hook("cd /w && bash -c \"gh pr review --approve 12\"").empty());
+  assert(hook("gh pr merge 12 --squash") == "gh pr merge is not allowed");
+  assert(hook("gh pr -R acme/core close 12") == "gh pr close is not allowed");
+  assert(!hook("gh --hostname github.com api -X PATCH repos/acme/core/pulls/12 -f state=closed").empty());
+  assert(!hook("gh api graphql -f query='mutation { x }'").empty());
+  assert(!hook("gh api -X PUT repos/acme/core/pulls/12/merge").empty());
+  assert(!hook("gh api -X=POST repos/acme/core/pulls/12/reviews --input /t/approve.json").empty());
+  assert(hook("gh api -X PATCH repos/acme/core/pulls/12 -f state=closed") == "changing or closing the PR is not allowed");
+  assert(!hook("gh api repos/acme/core/issues/12 -f state=closed").empty());  // -f implies POST
+  assert(hook("gh api repos/acme/core/pulls/12").empty());
+  assert(!hook("gh api -X PUT repos/acme/core/pulls/12/reviews/9/dismissals -f message=x").empty());
+  assert(!hook("gh api -X DELETE repos/acme/core/pulls/12/reviews/9").empty());
+  assert(hook("gh api repos/acme/core/pulls/12/reviews/9/comments").empty());
+  assert(hook("gh pr review --comment -b 'nice' " + PR).empty());
+  assert(hook("gh pr view " + PR + " --json headRefOid,files").empty());
+  assert(hook("gh api repos/acme/core/pulls/12/reviews").empty());  // GET lists them
+  assert(hook("gh pr diff " + PR + " | head -50").empty());
+  assert(hook("ls -la && git log --oneline -5").empty());
+  assert(review_block({{"tool_name", "Read"}, {"tool_input", {{"file_path", "/x"}}}}, read).empty());
+  assert(review_block(json::parse("[]"), read) == "can't parse the hook input");
+  assert((shell_split("a 'b c'\"d\\\"e\" f\\ g;h|i&&j$(k)") ==
+          std::vector<std::vector<std::string>>{{"a", "b cd\"e", "f g"}, {"h"}, {"i"}, {"j$"}, {"k"}}));
+
   std::puts("llm_check ok");
 }

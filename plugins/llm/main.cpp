@@ -4,9 +4,12 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -23,8 +26,11 @@ using namespace anton::llm;
 
 static const char* kUsage =
     "usage: anton-llm [--config PATH]\n"
+    "       anton-llm --check-review   (a Claude Code PreToolUse hook)\n"
     "\n"
-    "  --config PATH  default $XDG_CONFIG_HOME/anton/llm.json, or ~/.config/anton/llm.json\n";
+    "  --config PATH   default $XDG_CONFIG_HOME/anton/llm.json, or ~/.config/anton/llm.json\n"
+    "  --check-review  read a hook's JSON on stdin; exit 2 for a call that could approve,\n"
+    "                  request changes, merge or close, 0 for anything else\n";
 
 static constexpr size_t kMaxRuns = 64;            // at once, across PRs and reviewers
 static constexpr size_t kMaxDiff = 200 * 1024;    // piped to "stdin": "diff"
@@ -33,6 +39,7 @@ static constexpr size_t kMaxNote = 60 * 1024;     // a stored output, so {note} 
 
 static std::mutex mu;  // guards everything below and stdout
 static std::vector<Reviewer> reviewers;
+static Vars repos;  // "owner/name" -> local clone
 static std::map<std::string, PrState> prs;  // by normalized URL
 static size_t running = 0;
 // Running agents' process groups, fixed slots so the signal handler can read them.
@@ -64,6 +71,30 @@ static std::string tail(const std::string& s, size_t n) {
   return "…" + t.substr(at);
 }
 
+static std::string first_line(const Result& res) {
+  std::string e = trim(res.err);
+  return e.empty() ? "exit " + std::to_string(res.code) : e.substr(0, e.find('\n'));
+}
+
+// fetch writes the clone's one FETCH_HEAD, so a fetch and the worktree add
+// that reads it go together; runs on other PRs of that clone wait their turn.
+static std::mutex git_mu;
+
+// A run's {tmp} and the PR's worktree inside it, removed with the object.
+// ponytail: a plugin killed mid-run leaves them; the next run's prune drops the worktree's entry.
+struct Scratch {
+  std::string tmp, clone, tree;
+  ~Scratch() {
+    if (!tree.empty()) {
+      std::lock_guard lk(git_mu);
+      run({"git", "-C", clone, "worktree", "remove", "--force", tree});
+      run({"git", "-C", clone, "worktree", "prune"});
+    }
+    std::error_code ec;
+    if (!tmp.empty()) std::filesystem::remove_all(tmp, ec);
+  }
+};
+
 // Runs r on url. On success `output` is the note-to-be.
 static Run execute(const Reviewer& r, const std::string& url, const std::string& note, std::string& output) {
   std::string input;
@@ -80,10 +111,34 @@ static Run execute(const Reviewer& r, const std::string& url, const std::string&
     }
   }
   std::error_code ec;
-  if (!r.cwd.empty() && !std::filesystem::is_directory(r.cwd, ec))
-    return {Run::kFailed, "cwd " + r.cwd + " is not a directory"};
+  Scratch sc;
+  std::string tmpl = (std::filesystem::temp_directory_path(ec) / "anton-llm-XXXXXX").string();
+  if (!::mkdtemp(tmpl.data())) return {Run::kFailed, std::string("mkdtemp: ") + std::strerror(errno)};
+  sc.tmp = std::filesystem::canonical(tmpl, ec).string();  // macOS: /var/folders/… is /private/var/folders/…
+  if (ec) sc.tmp = tmpl;
 
-  Spawned s = spawn(argv(r, builtins(url, note)), {}, input, true, false, r.cwd);
+  // The PR's repo has a clone: run in it, or in a worktree of the PR's head.
+  Vars b = builtins(url, note, sc.tmp);
+  std::string cwd = r.cwd;
+  if (auto c = repos.find(b["repo"]); c != repos.end()) {
+    if (!std::filesystem::is_directory(c->second, ec)) return {Run::kFailed, "repos: " + c->second + " is not a directory"};
+    cwd = c->second;
+    if (r.checkout == "pr") {
+      std::lock_guard lk(git_mu);
+      std::string ref = "pull/" + b["number"] + "/head";
+      Result f = run({"git", "-C", c->second, "fetch", "origin", ref});
+      if (f.code != 0) return {Run::kFailed, "git fetch origin " + ref + " in " + c->second + ": " + first_line(f)};
+      sc.clone = c->second, sc.tree = cwd = sc.tmp + "/pr";
+      // No hooks: a core.hooksPath inside the repo would be the PR's own post-checkout.
+      Result w = run({"git", "-c", "core.hooksPath=/dev/null", "-C", c->second, "worktree", "add", "--detach", cwd,
+                      "FETCH_HEAD"});
+      if (w.code != 0) return {Run::kFailed, "git worktree add: " + first_line(w)};
+    }
+    b["repo_dir"] = cwd;
+  }
+  if (!cwd.empty() && !std::filesystem::is_directory(cwd, ec)) return {Run::kFailed, "cwd " + cwd + " is not a directory"};
+
+  Spawned s = spawn(argv(r, b), {}, input, true, false, cwd);
   if (s.pid == -1) return {Run::kFailed, s.error};
   std::atomic<pid_t>* slot = nullptr;
   for (auto& p : live) {
@@ -180,7 +235,19 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--config" && i + 1 < argc) path = argv[++i];
-    else if (a == "-h" || a == "--help") {
+    else if (a == "--check-review") {
+      std::stringstream in;
+      in << std::cin.rdbuf();
+      std::string why = review_block(json::parse(in.str(), nullptr, false), [](const std::string& p) {
+        std::ifstream f(p);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        return f ? std::optional(ss.str()) : std::nullopt;
+      });
+      if (why.empty()) return 0;
+      std::fprintf(stderr, "anton-llm: %s\n", why.c_str());  // exit 2: Claude Code blocks the call, Claude reads this
+      return 2;
+    } else if (a == "-h" || a == "--help") {
       std::fputs(kUsage, stdout);
       return 0;
     } else {
@@ -199,7 +266,7 @@ int main(int argc, char** argv) {
   } else {
     std::stringstream ss;
     ss << f.rdbuf();
-    if (std::string e = llm::parse_config(ss.str(), reviewers); !e.empty()) {
+    if (std::string e = llm::parse_config(ss.str(), reviewers, &repos); !e.empty()) {
       problem = tilde(path) + ": " + e;
       std::fprintf(stderr, "anton-llm: %s\n", problem.c_str());
     }
