@@ -11,6 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(ANTON_SLKX_PLUGIN "Build the anton-slkx Slack plugin" ON)
+option(ANTON_LLM_PLUGIN "Build the anton-llm review plugin" ON)
 
 include(FetchContent)
 
@@ -64,12 +65,20 @@ if(ANTON_SLKX_PLUGIN)
   install(TARGETS anton-slkx RUNTIME DESTINATION bin)
 endif()
 
+if(ANTON_LLM_PLUGIN)
+  add_executable(anton-llm plugins/llm/main.cpp src/proc.cpp)
+  target_include_directories(anton-llm PRIVATE src plugins/llm)
+  target_link_libraries(anton-llm PRIVATE nlohmann_json::nlohmann_json)
+  target_compile_options(anton-llm PRIVATE ${WARN})
+  install(TARGETS anton-llm RUNTIME DESTINATION bin)
+endif()
+
 # Self-checks: assert-based mains over the pure headers. -UNDEBUG because a
 # Release build defines NDEBUG, which would compile every assert away.
 enable_testing()
-foreach(t IN ITEMS model fold)
+foreach(t IN ITEMS model fold llm)
   add_executable(${t}_check tests/${t}_check.cpp)
-  target_include_directories(${t}_check PRIVATE src plugins/slkx)
+  target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm)
   target_link_libraries(${t}_check PRIVATE nlohmann_json::nlohmann_json)
   target_compile_options(${t}_check PRIVATE -UNDEBUG ${WARN})
   add_test(NAME ${t}_check COMMAND ${t}_check)

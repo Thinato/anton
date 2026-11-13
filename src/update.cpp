@@ -61,9 +61,10 @@ std::string self_update(bool install) {
   else if (run({"tar", "-xzf", (tmp / tarball).string(), "-C", tmp.string()}).code != 0)
     err = "unpack failed";
   else
-    // anton under whatever name it runs as; anton-slkx only where it already
-    // is, so a dir that never had it doesn't grow one.
-    for (auto [from, to] : {std::pair{tmp / "anton", exe}, std::pair{tmp / "anton-slkx", dir / "anton-slkx"}}) {
+    // anton under whatever name it runs as; the plugins only where they
+    // already are, so a dir that never had one doesn't grow it.
+    for (auto [from, to] : {std::pair{tmp / "anton", exe}, std::pair{tmp / "anton-slkx", dir / "anton-slkx"},
+                            std::pair{tmp / "anton-llm", dir / "anton-llm"}}) {
       if (!fs::exists(from) || (to != exe && !fs::exists(to))) continue;
       std::error_code ec;
       fs::rename(from, to, ec);

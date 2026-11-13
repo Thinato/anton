@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the latest anton release (anton + anton-slkx) from GitHub.
+# Installs the latest anton release (anton and its plugins) from GitHub.
 #
 # Usage:
 #   curl --proto '=https' --tlsv1.2 -sSf \
@@ -49,7 +49,8 @@ curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp/anton.tar.gz" ||
 tar -C "$tmp" -xzf "$tmp/anton.tar.gz"
 
 mkdir -p "$INSTALL_DIR"
-for bin in anton anton-slkx; do
+for bin in anton anton-slkx anton-llm; do
+    [ -f "$tmp/$bin" ] || continue  # an older ANTON_VERSION without this plugin
     mv "$tmp/$bin" "$INSTALL_DIR/$bin"
     chmod +x "$INSTALL_DIR/$bin"
     echo "installed: $INSTALL_DIR/$bin"

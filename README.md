@@ -22,8 +22,8 @@ curl --proto '=https' --tlsv1.2 -sSf \
   https://raw.githubusercontent.com/Thinato/anton/main/install.sh | sh
 ```
 
-It puts `anton` and `anton-slkx` in `~/.local/bin` (override with
-`ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
+It puts `anton`, `anton-slkx` and `anton-llm` in `~/.local/bin` (override
+with `ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
 `ANTON_VERSION=v0.1.0-beta`). After that, anton updates itself: when a release
 is out it swaps in the new binaries and asks you to restart
 (`"auto_update": false` in the config to only be told). anton needs [`gh`](https://cli.github.com),
@@ -38,7 +38,7 @@ cmake -B build && cmake --build build
 ```
 
 Dependencies (FTXUI, nlohmann/json) are fetched by CMake. `cmake --install
-build` puts `anton` and `anton-slkx` in your prefix.
+build` puts `anton`, `anton-slkx` and `anton-llm` in your prefix.
 
 ## Use
 
@@ -134,6 +134,42 @@ It follows the channel live over Slack's websocket, so a new post shows up in
 about a second. Flags and details are in
 [specs/03-plugin-slkx.md](specs/03-plugin-slkx.md).
 
+### LLM reviews
+
+`anton-llm` is built with anton too. It runs your own agent on a PR and puts
+what it prints in the PR's note. It doesn't know any model: you give it
+commands, one per key, in `~/.config/anton/llm.json`.
+
+```json
+{
+  "reviewers": [
+    {
+      "key": "R", "tag": "haiku", "stdin": "diff",
+      "prompt": "Review the diff on stdin for $PR_URL. Only flag real bugs.",
+      "command": ["claude", "-p", "--model", "haiku", "{prompt}"]
+    },
+    {
+      "key": "D", "tag": "deepseek", "stdin": "diff",
+      "system": "You review pull requests. Be terse.",
+      "prompt": "Review this diff of {repo}#{number}.",
+      "command": ["llm", "-m", "deepseek-chat", "-s", "{system}", "{prompt}"]
+    }
+  ]
+}
+```
+
+```json
+{ "name": "llm", "command": ["anton-llm"] }
+```
+
+Press `R` on a PR and its tags show `🤖 haiku…` while it runs, then
+`🤖 haiku`; `n` reads the review. `{name}` in a command is replaced by the
+reviewer's field of that name, or by `{pr_url}` (also `$PR_URL`), `{repo}`,
+`{number}` and `{note}` (the last review, so another key can post it).
+`"stdin": "diff"` pipes in `gh pr diff`. A run that fails or passes its
+`timeout` (600s) shows `🤖 haiku failed` and the error in the note. Details
+are in [specs/04-plugin-llm.md](specs/04-plugin-llm.md).
+
 ## Develop
 
 ```sh
@@ -142,8 +178,8 @@ cmake --build build && ctest --test-dir build
 
 The specs in [specs/](specs/) describe what anton does and why. Change the
 spec when you change the behavior. The logic that matters (state ranking,
-filters, the Slack event fold) is kept in pure headers, `src/model.hpp` and
-`plugins/slkx/fold.hpp`, checked by the asserts in `tests/`.
+filters, the Slack event fold, the LLM config) is kept in pure headers,
+`src/model.hpp`, `plugins/slkx/fold.hpp` and `plugins/llm/llm.hpp`, checked by the asserts in `tests/`.
 
 Work goes through pull requests. CI builds and runs the checks on each one,
 and they must pass to merge. Every merged PR publishes the next release,
