@@ -171,6 +171,10 @@ int main() {
   assert(hook("gh pr -R acme/core close 12") == "gh pr close is not allowed");
   assert(!hook("gh api graphql -f query='mutation { x }'").empty());
   assert(!hook("gh api -X PUT repos/acme/core/pulls/12/merge").empty());
+  assert(!hook("gh api -X=POST repos/acme/core/pulls/12/reviews --input /t/approve.json").empty());
+  assert(hook("gh api -X PATCH repos/acme/core/pulls/12 -f state=closed") == "changing or closing the PR is not allowed");
+  assert(!hook("gh api repos/acme/core/issues/12 -f state=closed").empty());  // -f implies POST
+  assert(hook("gh api repos/acme/core/pulls/12").empty());
   assert(hook("gh pr review --comment -b 'nice' " + PR).empty());
   assert(hook("gh pr view " + PR + " --json headRefOid,files").empty());
   assert(hook("gh api repos/acme/core/pulls/12/reviews").empty());  // GET lists them

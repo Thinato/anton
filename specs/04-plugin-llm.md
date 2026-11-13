@@ -183,7 +183,10 @@ flags, in layers:
   The one write is `gh api --method POST repos/{repo}/pulls/{number}/reviews
   --input {tmp}/review.json`, and Write may touch only that file:
   `Edit(/{tmp}/review.json)` (Write is governed by Edit rules; an absolute
-  path starts with `//`, which the `/` before `{tmp}` makes). A compound
+  path starts with `//`, which the `/` before `{tmp}` makes). `--add-dir
+  {tmp}` makes `{tmp}` a working directory, or the read block would also
+  refuse `gh api --input {tmp}/…`; it takes several values, so keep a flag
+  after it rather than the prompt. A compound
   command (`&&`, `;`, `|`) runs only if every part is allowed. Deny rules
   win over allow rules; the example denies `gh pr comment` with a file
   (`--body-file`, `-F`) or `--edit-last`/`--delete-last`, `gh api graphql`,
@@ -222,10 +225,11 @@ simple commands at `;`, `&&`, `|`, `$(…)` and the like, and looking inside
 - `gh pr review` with `--approve`/`-a` or `--request-changes`/`-r`;
 - `gh pr merge` and `gh pr close`;
 - `gh api graphql` (it can approve and merge), and a non-GET `gh api` on
-  `…/pulls/<n>/merge`;
+  `…/pulls/<n>/merge`, `…/pulls/<n>` or `…/issues/<n>` (a PATCH there
+  closes or edits the PR);
 - a review POST, `gh api` on `…/pulls/<n>/reviews` or
   `…/reviews/<id>/events` (POST is explicit, or implied by `--input` or
-  `-f`), unless it is one plain command with `--input FILE`, no `-f`/`-F`
+  `-f`; `-X=POST` and `-XPOST` count), unless it is one plain command with `--input FILE`, no `-f`/`-F`
   fields, and the file holds a JSON object whose `event` is exactly
   `"COMMENT"`, once. A missing `event` would leave a pending review that a
   later call could submit as an approval. "One plain command" means no `;`,
@@ -289,8 +293,8 @@ JSON with the PR filled in.
         ]}]}
       },
       "command": ["claude", "-p", "--model", "haiku",
-                  "--setting-sources", "", "--settings", "{settings}", "--strict-mcp-config",
-                  "--tools", "Read,Grep,Glob,Bash,Write", "--permission-mode", "dontAsk",
+                  "--setting-sources", "", "--settings", "{settings}", "--add-dir", "{tmp}",
+                  "--strict-mcp-config", "--tools", "Read,Grep,Glob,Bash,Write", "--permission-mode", "dontAsk",
                   "--max-turns", "40", "--max-budget-usd", "1", "--no-session-persistence",
                   "--append-system-prompt", "{system}", "{prompt}"]
     }
@@ -319,8 +323,8 @@ reviewer wrote it.
     }
   },
   "command": ["claude", "-p", "--model", "haiku",
-              "--setting-sources", "", "--settings", "{settings}", "--strict-mcp-config",
-              "--tools", "Read,Grep,Glob,Bash", "--permission-mode", "dontAsk",
+              "--setting-sources", "", "--settings", "{settings}", "--add-dir", "{tmp}",
+              "--strict-mcp-config", "--tools", "Read,Grep,Glob,Bash", "--permission-mode", "dontAsk",
               "--max-turns", "40", "--max-budget-usd", "1", "--no-session-persistence", "{prompt}"]
 },
 {
@@ -342,8 +346,8 @@ reviewer wrote it.
     ]}]}
   },
   "command": ["claude", "-p", "--model", "haiku",
-              "--setting-sources", "", "--settings", "{settings}", "--strict-mcp-config",
-              "--tools", "Bash,Write", "--permission-mode", "dontAsk",
+              "--setting-sources", "", "--settings", "{settings}", "--add-dir", "{tmp}",
+              "--strict-mcp-config", "--tools", "Bash,Write", "--permission-mode", "dontAsk",
               "--max-turns", "30", "--max-budget-usd", "1", "--no-session-persistence",
               "--append-system-prompt", "{system}", "{prompt}"]
 }

@@ -286,7 +286,8 @@ using ReadFile = std::function<std::optional<std::string>(const std::string&)>;
 
 // Why the Bash command cmd (run in cwd) must not run, or "". Blocks what can
 // approve, request changes, merge or close: `gh pr review` with those flags,
-// `gh pr merge|close`, `gh api graphql`, `gh api` writes to pulls/N/merge, and
+// `gh pr merge|close`, `gh api graphql`, `gh api` writes to pulls/N/merge or to
+// pulls/N and issues/N themselves (a PATCH closes or edits the PR), and
 // a review POST (pulls/N/reviews, or .../reviews/ID/events) unless it is one
 // plain command whose --input file has "event": "COMMENT".
 inline std::string command_block(const std::string& cmd, const std::string& cwd, const ReadFile& read,
@@ -320,7 +321,8 @@ inline std::string command_block(const std::string& cmd, const std::string& cwd,
     for (size_t i = std::find(a.begin(), a.end(), "api") - a.begin() + 1; i < a.size(); ++i) {
       std::string f = a[i], v;
       if (size_t eq = f.find('='); f.starts_with("--") && eq != std::string::npos) v = f.substr(eq + 1), f.resize(eq);
-      else if (f.size() > 2 && f[1] != '-' && takes.count(f.substr(0, 2))) v = f.substr(2), f.resize(2);  // -XPOST
+      else if (f.size() > 2 && f[1] != '-' && takes.count(f.substr(0, 2)))  // -XPOST, -X=POST
+        v = f.substr(f[2] == '=' ? 3 : 2), f.resize(2);
       else if (takes.count(f) && i + 1 < a.size()) v = a[++i];
       if (f == "-X" || f == "--method") {
         method = v;
@@ -335,6 +337,8 @@ inline std::string command_block(const std::string& cmd, const std::string& cwd,
     auto is = [&](const char* re) { return std::regex_search(endpoint, std::regex(re, std::regex::icase)); };
     if (is(R"((^|/)graphql/?$)")) return "gh api graphql is not allowed (it can approve and merge)";
     if (method != "GET" && is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/merge/?$)")) return "merging is not allowed";
+    if (method != "GET" && is(R"((^|/)repos/[^/]+/[^/]+/(pulls|issues)/[^/]+/?$)"))  // PATCH state=closed
+      return "changing or closing the PR is not allowed";
     if (method != "POST" || !is(R"((^|/)repos/[^/]+/[^/]+/pulls/[^/]+/reviews(/[^/]+/events)?/?$)")) continue;
     if (depth > 0 || cmd.find_first_of(";&|<>()`$\n") != std::string::npos)
       return "post a review as one plain gh api command, nothing around it";

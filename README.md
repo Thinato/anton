@@ -212,8 +212,8 @@ posts it as a comment-only review:
         ]}]}
       },
       "command": ["claude", "-p", "--model", "haiku",
-                  "--setting-sources", "", "--settings", "{settings}", "--strict-mcp-config",
-                  "--tools", "Read,Grep,Glob,Bash,Write", "--permission-mode", "dontAsk",
+                  "--setting-sources", "", "--settings", "{settings}", "--add-dir", "{tmp}",
+                  "--strict-mcp-config", "--tools", "Read,Grep,Glob,Bash,Write", "--permission-mode", "dontAsk",
                   "--max-turns", "40", "--max-budget-usd", "1", "--no-session-persistence",
                   "--append-system-prompt", "{system}", "{prompt}"]
     }
