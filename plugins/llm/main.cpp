@@ -1,28 +1,18 @@
 // anton-llm: a key runs your agent on a PR; its answer becomes the PR's note.
 // See specs/04-plugin-llm.md.
-#include <signal.h>
-#include <unistd.h>
-
-#include <atomic>
-#include <cerrno>
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <sstream>
 #include <string>
-#include <thread>
 
+#include "../run.hpp"
 #include "llm.hpp"
-#include "proc.hpp"
 
 using namespace anton;
 using namespace anton::llm;
+using namespace anton::plugin;
 
 static const char* kUsage =
     "usage: anton-llm [--config PATH]\n"
@@ -33,7 +23,6 @@ static const char* kUsage =
     "                  request changes, merge or close, 0 for anything else\n"
     "  --allow-approve  ...except a review POST whose \"event\" is \"APPROVE\"\n";
 
-static constexpr size_t kMaxRuns = 64;            // at once, across PRs and reviewers
 static constexpr size_t kMaxDiff = 200 * 1024;    // piped to "stdin": "diff"
 static constexpr size_t kMaxOut = 1024 * 1024;    // stdout kept from one run
 static constexpr size_t kMaxNote = 60 * 1024;     // a stored output, so {note} stays a sane argv
@@ -42,9 +31,7 @@ static std::mutex mu;  // guards everything below and stdout
 static std::vector<Reviewer> reviewers;
 static Vars repos;  // "owner/name" -> local clone
 static std::map<std::string, PrState> prs;  // by normalized URL
-static size_t running = 0;
-// Running agents' process groups, fixed slots so the signal handler can read them.
-static std::atomic<pid_t> live[kMaxRuns] = {};
+static size_t running = 0;  // at most kMaxRuns, across PRs and reviewers
 
 static void emit(const std::string& line) {
   std::fputs(line.c_str(), stdout);
@@ -52,49 +39,10 @@ static void emit(const std::string& line) {
   std::fflush(stdout);
 }
 
-static void kill_live() {
-  for (auto& p : live)
-    if (pid_t g = p; g > 0) kill_group(g);
-}
-
-// Agents run in their own process groups (so a timeout reaches whatever they
-// spawn), which anton's kill of ours doesn't reach: take them along.
 [[noreturn]] static void quit(int code) {
   kill_live();
   ::_exit(code);  // not exit(): run threads may still be using statics
 }
-
-static std::string tail(const std::string& s, size_t n) {
-  std::string t = trim(s);
-  if (t.size() <= n) return t;
-  size_t at = t.size() - n;
-  while (at < t.size() && (static_cast<unsigned char>(t[at]) & 0xC0) == 0x80) ++at;
-  return "…" + t.substr(at);
-}
-
-static std::string first_line(const Result& res) {
-  std::string e = trim(res.err);
-  return e.empty() ? "exit " + std::to_string(res.code) : e.substr(0, e.find('\n'));
-}
-
-// fetch writes the clone's one FETCH_HEAD, so a fetch and the worktree add
-// that reads it go together; runs on other PRs of that clone wait their turn.
-static std::mutex git_mu;
-
-// A run's {tmp} and the PR's worktree inside it, removed with the object.
-// ponytail: a plugin killed mid-run leaves them; the next run's prune drops the worktree's entry.
-struct Scratch {
-  std::string tmp, clone, tree;
-  ~Scratch() {
-    if (!tree.empty()) {
-      std::lock_guard lk(git_mu);
-      run({"git", "-C", clone, "worktree", "remove", "--force", tree});
-      run({"git", "-C", clone, "worktree", "prune"});
-    }
-    std::error_code ec;
-    if (!tmp.empty()) std::filesystem::remove_all(tmp, ec);
-  }
-};
 
 // Runs r on url. On success `output` is the note-to-be.
 static Run execute(const Reviewer& r, const std::string& url, const std::string& note, std::string& output) {
@@ -113,10 +61,7 @@ static Run execute(const Reviewer& r, const std::string& url, const std::string&
   }
   std::error_code ec;
   Scratch sc;
-  std::string tmpl = (std::filesystem::temp_directory_path(ec) / "anton-llm-XXXXXX").string();
-  if (!::mkdtemp(tmpl.data())) return {Run::kFailed, std::string("mkdtemp: ") + std::strerror(errno)};
-  sc.tmp = std::filesystem::canonical(tmpl, ec).string();  // macOS: /var/folders/… is /private/var/folders/…
-  if (ec) sc.tmp = tmpl;
+  if (std::string e = make_tmp(sc, "anton-llm"); !e.empty()) return {Run::kFailed, e};
 
   // The PR's repo has a clone: run in it, or in a worktree of the PR's head.
   Vars b = builtins(url, note, sc.tmp);
@@ -125,46 +70,17 @@ static Run execute(const Reviewer& r, const std::string& url, const std::string&
     if (!std::filesystem::is_directory(c->second, ec)) return {Run::kFailed, "repos: " + c->second + " is not a directory"};
     cwd = c->second;
     if (r.checkout == "pr") {
-      std::lock_guard lk(git_mu);
-      std::string ref = "pull/" + b["number"] + "/head";
-      Result f = run({"git", "-C", c->second, "fetch", "origin", ref});
-      if (f.code != 0) return {Run::kFailed, "git fetch origin " + ref + " in " + c->second + ": " + first_line(f)};
-      sc.clone = c->second, sc.tree = cwd = sc.tmp + "/pr";
-      // No hooks: a core.hooksPath inside the repo would be the PR's own post-checkout.
-      Result w = run({"git", "-c", "core.hooksPath=/dev/null", "-C", c->second, "worktree", "add", "--detach", cwd,
-                      "FETCH_HEAD"});
-      if (w.code != 0) return {Run::kFailed, "git worktree add: " + first_line(w)};
+      if (std::string e = add_worktree(sc, c->second, b["number"]); !e.empty()) return {Run::kFailed, e};
+      cwd = sc.tree;
     }
     b["repo_dir"] = cwd;
   }
   if (!cwd.empty() && !std::filesystem::is_directory(cwd, ec)) return {Run::kFailed, "cwd " + cwd + " is not a directory"};
 
-  Spawned s = spawn(argv(r, b), {}, input, true, false, cwd);
-  if (s.pid == -1) return {Run::kFailed, s.error};
-  std::atomic<pid_t>* slot = nullptr;
-  for (auto& p : live) {
-    pid_t free = 0;
-    if (p.compare_exchange_strong(free, s.pid)) {
-      slot = &p;
-      break;
-    }
-  }
-
-  // The watchdog: SIGTERM to the group at the timeout, SIGKILL 5s later.
-  std::mutex wm;
-  std::condition_variable wcv;
-  bool done = false, timed_out = false;
-  std::thread dog([&] {
-    std::unique_lock lk(wm);
-    if (wcv.wait_for(lk, std::chrono::seconds(r.timeout), [&] { return done; })) return;
-    timed_out = true;
-    kill_group(s.pid);
-    if (!wcv.wait_for(lk, std::chrono::seconds(5), [&] { return done; })) ::kill(-s.pid, SIGKILL);
-  });
   std::string out, err;
   bool cut = false;
-  int code = stream(
-      s,
+  Watched w = watch(
+      argv(r, b), {}, input, cwd, r.timeout,
       [&](const std::string& l) {
         if (out.size() < kMaxOut) out += l + "\n";
         else cut = true;
@@ -173,17 +89,11 @@ static Run execute(const Reviewer& r, const std::string& url, const std::string&
         err += l + "\n";
         if (err.size() > 8192) err.erase(0, err.size() - 4096);
       });
-  {
-    std::lock_guard lk(wm);
-    done = true;
-  }
-  wcv.notify_all();
-  dog.join();
-  if (slot) *slot = 0;
+  if (!w.error.empty()) return {Run::kFailed, w.error};
 
-  std::string why = timed_out ? "timed out after " + std::to_string(r.timeout) + "s"
-                    : code != 0 ? "exit " + std::to_string(code)
-                                : "";
+  std::string why = w.timed_out ? "timed out after " + std::to_string(r.timeout) + "s"
+                    : w.code != 0 ? "exit " + std::to_string(w.code)
+                                  : "";
   if (!why.empty()) {
     std::string t = tail(err.empty() ? out : err, 2000);
     return {Run::kFailed, t.empty() ? why : why + "\n\n```\n" + t + "\n```"};

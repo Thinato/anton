@@ -64,7 +64,8 @@ std::string self_update(bool install) {
     // anton under whatever name it runs as; the plugins only where they
     // already are, so a dir that never had one doesn't grow it.
     for (auto [from, to] : {std::pair{tmp / "anton", exe}, std::pair{tmp / "anton-slkx", dir / "anton-slkx"},
-                            std::pair{tmp / "anton-llm", dir / "anton-llm"}}) {
+                            std::pair{tmp / "anton-llm", dir / "anton-llm"},
+                            std::pair{tmp / "anton-temoc", dir / "anton-temoc"}}) {
       if (!fs::exists(from) || (to != exe && !fs::exists(to))) continue;
       std::error_code ec;
       fs::rename(from, to, ec);

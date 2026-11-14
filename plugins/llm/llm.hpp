@@ -38,10 +38,10 @@ struct Reviewer {
 
 inline const std::set<std::string> kBuiltins = {"pr_url", "repo", "number", "note", "tmp", "repo_dir"};
 
-inline std::string config_path() {
-  if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x) return std::string(x) + "/anton/llm.json";
+inline std::string config_path(const std::string& file = "llm.json") {
+  if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x) return std::string(x) + "/anton/" + file;
   const char* home = std::getenv("HOME");
-  return std::string(home ? home : ".") + "/.config/anton/llm.json";
+  return std::string(home ? home : ".") + "/.config/anton/" + file;
 }
 
 // /Users/me/.config/anton/llm.json -> ~/.config/anton/llm.json, for messages.

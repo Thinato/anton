@@ -12,6 +12,7 @@ endif()
 
 option(ANTON_SLKX_PLUGIN "Build the anton-slkx Slack plugin" ON)
 option(ANTON_LLM_PLUGIN "Build the anton-llm review plugin" ON)
+option(ANTON_TEMOC_PLUGIN "Build the anton-temoc acceptance-spec plugin" ON)
 
 include(FetchContent)
 
@@ -86,12 +87,20 @@ if(ANTON_LLM_PLUGIN)
   install(TARGETS anton-llm RUNTIME DESTINATION bin)
 endif()
 
+if(ANTON_TEMOC_PLUGIN)
+  add_executable(anton-temoc plugins/temoc/main.cpp src/proc.cpp)
+  target_include_directories(anton-temoc PRIVATE src plugins/temoc)
+  target_link_libraries(anton-temoc PRIVATE nlohmann_json::nlohmann_json)
+  target_compile_options(anton-temoc PRIVATE ${WARN})
+  install(TARGETS anton-temoc RUNTIME DESTINATION bin)
+endif()
+
 # Self-checks: assert-based mains over the pure headers. -UNDEBUG because a
 # Release build defines NDEBUG, which would compile every assert away.
 enable_testing()
-foreach(t IN ITEMS model fold llm markdown)
+foreach(t IN ITEMS model fold llm markdown temoc)
   add_executable(${t}_check tests/${t}_check.cpp)
-  target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm)
+  target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm plugins/temoc)
   target_link_libraries(${t}_check PRIVATE nlohmann_json::nlohmann_json)
   target_compile_options(${t}_check PRIVATE -UNDEBUG ${WARN})
   add_test(NAME ${t}_check COMMAND ${t}_check)

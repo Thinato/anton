@@ -74,6 +74,25 @@ shown in the `?` overlay for debugging.
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
 | `note` | optional longer text, e.g. an LLM's review of the PR. `n` opens it in a scrollable overlay; the detail line says `n read note` when there is one. It's rendered as markdown, the same way as a PR's description in the reader (`01-anton.md`). Like everything else it must fit the 64 KiB line. |
+| `marks` | optional notes on lines of files in the PR's head, below. anton doesn't show them yet. |
+
+`marks` lets any plugin annotate lines of the PR's files: a test result on
+the row of a spec table, a linter's finding on a line of code.
+
+```json
+"marks": {"ref": "f9ec85333a272433d5440a4567602e3fd0e1fd2d", "lines": [
+  {"file": "specs/a.md", "line": 12, "level": "error", "glyph": "✗", "text": "sum: expected 5, got 4"},
+  {"file": "specs/a.md", "line": 7,  "level": "warn",  "glyph": "💤", "text": "snoozed until 2026-12-01"},
+  {"file": "specs/a.md", "line": 0,  "level": "ok",    "glyph": "✓", "text": "11 passed"}]}
+```
+
+| field | |
+| --- | --- |
+| `ref` | the commit the marks are about, normally the PR's head when the plugin looked. A viewer of another commit knows they may be off. |
+| `file` | path in the repo, as in the PR's diff. |
+| `line` | 1-based line of `file` at `ref`; `0` is the file as a whole. A line can have several marks. |
+| `level` | `ok`, `error`, `warn` or `dim` (didn't run, not relevant): how to color it. Anything else reads as `dim`. |
+| `glyph`, `text` | what to show next to the line; both may be empty. |
 
 **State, not deltas.** Every `pr` line is the *complete* truth for
 (plugin, PR) and replaces the previous one; an omitted field means "none"

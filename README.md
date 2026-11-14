@@ -23,7 +23,7 @@ curl --proto '=https' --tlsv1.2 -sSf \
   https://raw.githubusercontent.com/Thinato/anton/main/install.sh | sh
 ```
 
-It puts `anton`, `anton-slkx` and `anton-llm` in `~/.local/bin` (override
+It puts `anton` and its plugins (`anton-slkx`, `anton-llm`, `anton-temoc`) in `~/.local/bin` (override
 with `ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
 `ANTON_VERSION=v0.1.0-beta`). After that, anton updates itself: when a release
 is out it swaps in the new binaries and asks you to restart
@@ -39,7 +39,7 @@ cmake -B build && cmake --build build
 ```
 
 Dependencies (FTXUI, nlohmann/json, md4c) are fetched by CMake. `cmake --install
-build` puts `anton`, `anton-slkx` and `anton-llm` in your prefix.
+build` puts `anton` and its plugins in your prefix.
 
 ## Use
 
@@ -249,6 +249,31 @@ hook `"args": ["--check-review", "--allow-approve"]` and tell it so in
 draft-then-post pair, where you read the draft before a second key posts
 it, and the details are in [specs/04-plugin-llm.md](specs/04-plugin-llm.md).
 
+### Acceptance specs
+
+`anton-temoc` runs the [temoc](https://github.com/killertux/temoc) specs a
+PR changes. Tell it where your clones are and which temoc config starts
+their fixture server, in `~/.config/anton/temoc.json`:
+
+```json
+{ "repos": { "acme/core": { "dir": "~/src/core", "config": "Config.toml" } } }
+```
+
+```json
+{ "name": "temoc", "command": ["anton-temoc"] }
+```
+
+Press `T` on a PR: it checks out the PR's head in a temporary worktree,
+runs `temoc --output jsonl` on the changed `.md` files that have a
+`decisionTable` table, and tags the row `🧪 temoc…`, then `🧪 14 ✓` or
+`🧪 2 ✗ 12 ✓` (`💤 4` for snoozed rows). `n` lists each failing row as
+`file:line` with what was expected and what came back.
+
+This runs the PR's code on your machine, like running its tests yourself:
+the fixtures and, with a `config` inside the repo, the server command the PR
+names. It only runs when you press the key. Details in
+[specs/05-plugin-temoc.md](specs/05-plugin-temoc.md).
+
 ## Develop
 
 ```sh
@@ -257,9 +282,10 @@ cmake --build build && ctest --test-dir build
 
 The specs in [specs/](specs/) describe what anton does and why. Change the
 spec when you change the behavior. The logic that matters (state ranking,
-filters, the Slack event fold, the LLM config, the markdown renderer) is kept
-pure, in `src/model.hpp`, `plugins/slkx/fold.hpp`, `plugins/llm/llm.hpp` and
-`src/markdown.cpp`, checked by the asserts in `tests/`.
+filters, the Slack event fold, the LLM config, the markdown renderer, the
+temoc event fold) is kept pure, in `src/model.hpp`, `plugins/slkx/fold.hpp`,
+`plugins/llm/llm.hpp`, `src/markdown.cpp` and `plugins/temoc/temoc.hpp`,
+checked by the asserts in `tests/`.
 
 Work goes through pull requests. CI builds and runs the checks on each one,
 and they must pass to merge. Every merged PR publishes the next release,

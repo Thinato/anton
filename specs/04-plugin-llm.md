@@ -387,11 +387,12 @@ Posting a note as a plain comment, no agent involved:
 
 Part of anton's CMake project (`-DANTON_LLM_PLUGIN=OFF` to skip). Reuses
 `src/proc.hpp` for spawning (with a `cwd`) and `expand_home` from
-`src/config.hpp`.
+`src/config.hpp`. The `{tmp}`, worktree and watchdog code is in `plugins/run.hpp`,
+shared with anton-temoc.
 
 ```
-plugins/llm/main.cpp   flags, config load, stdin loop, run threads, watchdog,
-                       {tmp}, the clone's worktree, --check-review's I/O
+plugins/llm/main.cpp   flags, config load, stdin loop, run threads,
+                       --check-review's I/O
 plugins/llm/llm.hpp    the pure part: config parse, substitution, pr line,
                        the --check-review verdict
 tests/llm_check.cpp    asserts over llm.hpp: defaults, validation errors,
