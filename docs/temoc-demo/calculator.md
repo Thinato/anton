@@ -35,3 +35,5 @@ We can also use a single method instead of multiple setter and getters:
 | 2   | 2   | 1.00     | 1.00     |
 | 20  | 10  | 1.30     | 0.77     |
 | 1   | 10  | 0.00     | inf      |
+
+The end.
