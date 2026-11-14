@@ -95,6 +95,21 @@ changes requested, approved, your own review, waiting for review.
 - `people` renames GitHub logins and colors them. Use the same name your Slack
   shows and the 👀 tags line up with the author column. `hex` is used on
   truecolor terminals and `ansi` (a name or 0–255) on everything else.
+- `columns` picks the columns and their order: any of `repo`, `number`,
+  `size`, `state`, `age`, `author`, `tags`, `title`. An object instead of a name
+  is a column you fill yourself. Its command gets the PR as JSON on stdin and
+  as `{url}`, `{repo}`, `{number}`, `{title}`… in its arguments, and the first
+  line it prints is the cell:
+
+  ```json
+  "columns": ["repo", "size", "state", "age", "author",
+              { "name": "BASE", "width": 10,
+                "command": ["gh", "pr", "view", "{url}", "--json", "baseRefName", "-q", ".baseRefName"] },
+              "tags", "title"]
+  ```
+
+  It reruns on each refresh and when the PR changes. Details are in
+  [specs/01-anton.md](specs/01-anton.md#command-columns).
 - `recent:24h` is anton's own filter: open PRs, plus those closed or merged in
   the last 24 hours. It's handy on a Slack tab, where merges are worth seeing.
 

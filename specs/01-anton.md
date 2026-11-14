@@ -165,6 +165,39 @@ kinds, since `org:` and `repo:` are in the local subset.
 - **TAGS**: plugin-provided (see `02-plugins.md`), e.g. `👀 alice`.
 - **TITLE**: takes the remaining width, truncated with `…`.
 
+`"columns"` in the config picks the columns and their order, by name:
+`repo`, `number` (the `#` column), `size`, `state`, `age`, `author`, `tags`,
+`title`. The default is all of them in that order. An unknown name is a config
+error. Without `title`, nothing flexes and the row ends after the last column.
+
+### Command columns
+
+An object in `"columns"` is a column you fill with your own program:
+
+```json
+{ "name": "CI", "width": 8, "timeout": 10,
+  "command": ["sh", "-c", "gh pr checks \"$1\" --json state -q 'map(.state)|unique|join(\",\")'", "sh", "{url}"] }
+```
+
+- The PR goes to the command as a JSON object on stdin (`url`, `repo`,
+  `owner`, `number`, `title`, `author`, `state`, `draft`, `review_decision`,
+  `checks`, `my_review`, `mergeable`, `additions`, `deletions`, and `created`,
+  `updated`, `closed` as Unix seconds). Each `{field}` in `command` is
+  replaced by that field (strings bare, others as JSON). Anything else in
+  braces is left alone. There's no shell: `$HOME` and a leading `~` are
+  expanded as in plugin commands, and `sh -c` is how you get pipes.
+- The cell is the first line of stdout, with control characters removed, cut to
+  `width` (default 10, at most 80). `name` is the header, as written.
+- A cell runs when its row is first drawn, again on every refresh (the
+  2-minute one and `r`), and when the PR's `updatedAt` changes. It shows `…`
+  until the first run ends, then keeps the last output while a rerun is going.
+  Four commands run at once.
+- A non-zero exit, a command that can't start, or one still running at
+  `timeout` (seconds, default 10; its process group gets SIGTERM) shows a red
+  `✗`. The detail line of the selected PR says why: `[CI] ✗ exit 1: <first
+  stderr line>`.
+- Stubs (list-view PRs whose fields aren't fetched yet) get no run until they're filled.
+
 Sort is per view. Search views: `updatedAt` descending; `s` cycles updated → created → size → repo.
 List views start on `list` (the plugin's `order`, higher first; PRs without one go last, by update) and `s` cycles list → updated → created → size → repo.
 
