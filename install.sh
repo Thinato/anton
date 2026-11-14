@@ -49,7 +49,7 @@ curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp/anton.tar.gz" ||
 tar -C "$tmp" -xzf "$tmp/anton.tar.gz"
 
 mkdir -p "$INSTALL_DIR"
-for bin in anton anton-slkx anton-llm; do
+for bin in anton anton-slkx anton-llm anton-temoc; do
     [ -f "$tmp/$bin" ] || continue  # an older ANTON_VERSION without this plugin
     mv "$tmp/$bin" "$INSTALL_DIR/$bin"
     chmod +x "$INSTALL_DIR/$bin"

@@ -113,7 +113,8 @@ version of the code is there:
   After the run: `git worktree remove --force` and `git worktree prune`. No
   branch or ref is created, and your working copy and its current branch
   aren't touched. A failed fetch (no `origin`, offline, no such PR) fails the
-  run: `git fetch origin pull/12/head in ~/src/core: fatal: …`.
+  run: `git fetch origin pull/12/head in ~/src/core: fatal: …`, and so does
+  one that takes over 120s (`…: timed out`), since it holds the lock below.
 - **`"as-is"`**: the clone itself, on whatever you have checked out.
 
 `"pr"` is the default because a reviewer should read the code under review,
@@ -387,11 +388,12 @@ Posting a note as a plain comment, no agent involved:
 
 Part of anton's CMake project (`-DANTON_LLM_PLUGIN=OFF` to skip). Reuses
 `src/proc.hpp` for spawning (with a `cwd`) and `expand_home` from
-`src/config.hpp`.
+`src/config.hpp`. The `{tmp}`, worktree and watchdog code is in `plugins/run.hpp`,
+shared with anton-temoc.
 
 ```
-plugins/llm/main.cpp   flags, config load, stdin loop, run threads, watchdog,
-                       {tmp}, the clone's worktree, --check-review's I/O
+plugins/llm/main.cpp   flags, config load, stdin loop, run threads,
+                       --check-review's I/O
 plugins/llm/llm.hpp    the pure part: config parse, substitution, pr line,
                        the --check-review verdict
 tests/llm_check.cpp    asserts over llm.hpp: defaults, validation errors,

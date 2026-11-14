@@ -65,10 +65,10 @@ jobs:
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DANTON_VERSION=${{ needs.version.outputs.tag }}
-          cmake --build build -j --target anton anton-slkx anton-llm
+          cmake --build build -j --target anton anton-slkx anton-llm anton-temoc
 
       - name: Package
-        run: tar -czf anton-${{ matrix.name }}.tar.gz -C build anton anton-slkx anton-llm
+        run: tar -czf anton-${{ matrix.name }}.tar.gz -C build anton anton-slkx anton-llm anton-temoc
 
       - uses: actions/upload-artifact@v4
         with:

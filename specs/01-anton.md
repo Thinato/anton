@@ -345,7 +345,7 @@ At startup and every 15 minutes, anton asks `gh api repos/Thinato/anton/releases
 If that tag is newer (by number: `v0.1.12-beta` > `v0.1.9-beta`; the suffix
 doesn't count), it downloads the tarball for this platform with
 `gh release download`, unpacks it next to the running binary and `rename()`s
-`anton` (whatever it's called), `anton-slkx` and `anton-llm` (each only if
+`anton` (whatever it's called), `anton-slkx`, `anton-llm` and `anton-temoc` (each only if
 it's already there) over the old ones. The running process keeps its old file; the footer says
 `⬆ updated to vX, restart anton to use it` until quit. Nothing is restarted
 behind your back: plugins keep running the old binaries until anton
@@ -387,19 +387,23 @@ plugins/slkx/main.cpp the anton-slkx executable (03-plugin-slkx.md)
 plugins/slkx/fold.hpp its pure event fold — testable without slkx
 plugins/llm/main.cpp  the anton-llm executable (04-plugin-llm.md)
 plugins/llm/llm.hpp   its pure config parse, substitution, pr line
+plugins/temoc/main.cpp the anton-temoc executable (05-plugin-temoc.md)
+plugins/temoc/temoc.hpp its pure config parse, temoc event fold, pr line
+plugins/run.hpp       {tmp}, PR worktree, watched run: shared by llm and temoc
 tests/model_check.cpp assert-based self-check for model.hpp
 tests/fold_check.cpp  assert-based self-check for fold.hpp
 tests/llm_check.cpp   assert-based self-check for llm.hpp
 tests/markdown_check.cpp  assert-based self-check for markdown.cpp
+tests/temoc_check.cpp     assert-based self-check for temoc.hpp
 ```
 
-One CMake project, three executables. `anton-slkx` is built by default
+One CMake project, four executables. `anton-slkx` is built by default
 (`-DANTON_SLKX_PLUGIN=OFF` to skip); it only *execs* `slkx` at runtime, so
 building it needs nothing slkx-related, and anton never requires it.
 `anton-llm` likewise (`-DANTON_LLM_PLUGIN=OFF`); it only execs the commands
-you configure.
+you configure. `anton-temoc` too (`-DANTON_TEMOC_PLUGIN=OFF`); it execs `temoc`.
 
-`model.hpp`, `fold.hpp` and `llm.hpp` are pure, with assert-based checks run by `ctest`,
+`model.hpp`, `fold.hpp`, `llm.hpp` and `temoc.hpp` are pure, with assert-based checks run by `ctest`,
 in the same style as slkx's self-checks.
 
 ## Open questions
