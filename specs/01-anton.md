@@ -270,7 +270,7 @@ process group before anton exits.
 
 A release build knows its tag (`anton --version`, baked in by
 `.github/workflows/release.yml`); a local build is `dev` and never updates.
-At startup and every 6 hours, anton asks `gh api repos/Thinato/anton/releases/latest`.
+At startup and every 15 minutes, anton asks `gh api repos/Thinato/anton/releases/latest`.
 If that tag is newer (by number: `v0.1.12-beta` > `v0.1.9-beta`; the suffix
 doesn't count), it downloads the tarball for this platform with
 `gh release download`, unpacks it next to the running binary and `rename()`s
