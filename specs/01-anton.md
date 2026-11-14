@@ -12,7 +12,7 @@ anton has **no Slack knowledge**. Slack is one plugin among possible others
 ## Non-goals (v1)
 
 - Reviewing code inside the TUI (diffs, comments). Enter reads the PR's
-  description; `w` opens the browser for the rest.
+  description and its markdown files; `w` opens the browser for the rest.
 - Writing to GitHub (approve, merge, comment).
 - Persistence between runs. Everything is rebuilt at startup.
 - Any GitHub auth of its own. `gh auth status` must already succeed.
@@ -221,7 +221,7 @@ Width is therefore at most 4 chars per side (`+999`, `-10k`).
 | key | |
 | --- | --- |
 | `j`/`k`, `↑`/`↓`, `g`/`G` | move |
-| `⏎` | read the PR's description (Reader, below) |
+| `⏎` | read the PR's description and markdown files (Reader, below) |
 | `w` | open PR in browser (`gh pr view --web <url>`) |
 | `y` | copy URL (`pbcopy` / `xclip` / `wl-copy`, first found) |
 | `r` | refresh now |
@@ -249,16 +249,59 @@ could feed a plugin that tells anton to re-fetch a PR the moment it changes.
 ## Reader
 
 `⏎` replaces the table with the selected PR's description: its title, then
-`repo#number  author  url`, then the body rendered as markdown, glow-style.
-`j`/`k`, `space`/PgDn, PgUp, `g`/`G` scroll and the footer shows how far
-down you are; `w` or `⏎` opens the PR in the browser, `y` copies its URL,
-`q`/`esc` goes back to the table.
+`repo#number  author  url`, a row of tabs, then the body rendered as
+markdown, glow-style. `j`/`k`, `space`/PgDn, PgUp, `g`/`G` scroll and the
+footer shows how far down you are; `w` or `⏎` opens the PR in the browser,
+`y` copies its URL, `q`/`esc` goes back to the table.
 
-- The body comes from `gh pr view <url> --json body`, off the UI thread, and
-  is kept per URL for the session. It's fetched again when the PR's
-  `updatedAt` moves (editing the description bumps it). Meanwhile the reader
-  says `loading…`; a failure says why (reopening retries, and a failed
-  refetch keeps the text it had); an empty body reads `No description.`
+The team reads more markdown than code, so the reader also shows the
+markdown files the PR adds or changes, each in a tab after `Description`:
+temoc specs first (`🧪`), then the others, in the PR's order. `Tab`/`]` and
+`Shift-Tab`/`[` switch tabs, and each keeps its own scroll. A tab is named
+by the file's basename, with as many parent directories as it takes to tell
+two apart (`api/README.md`, `web/README.md`), followed by its marks, if a
+plugin left any, counted by glyph (`🧪 calculator.md ✓ 10 ✗ 1 💤 1`); the
+line under the title is then the file's full path and the commit it's at.
+Tabs that don't fit drop off the right, or the left to keep the open one
+on screen.
+
+- The body comes from `gh pr view <url> --json body,headRefOid`, off the
+  UI thread, and is kept per URL for the session. It's fetched again when
+  the PR's `updatedAt` moves (editing the description or pushing bumps it).
+  Meanwhile the reader says `loading…`; a failure says why (reopening
+  retries, and a failed refetch keeps the text it had); an empty body reads
+  `No description.`
+- The files are the PR's `.md`/`.markdown` files that aren't removed
+  (`gh api --paginate repos/O/R/pulls/N/files`), each read at the head
+  commit the body came with (`gh api repos/O/R/contents/<path>?ref=<sha>`,
+  raw), off the UI thread, 6 at a time, once per (URL, head) for the
+  session. All of them are read when the reader opens the PR: putting specs
+  first needs their text. Meanwhile the tab row says `loading files…`; a
+  failure to list them says why there (reopening retries), and a file that
+  couldn't be read says so on its tab.
+- **temoc directives**: a `[//]: # "decisionTable Fixture"` line (or
+  `(…)`, `'…'`; at most three spaces in, outside fenced code) is a link
+  reference definition, which markdown shows as nothing. The reader shows
+  it, in the description too, as a badge line before its table:
+  `🧪 CalculatorFixture#log`, then `· snoozed until 2026-12-01` in yellow
+  for `-- snooze until 2026-12-01`, or `· snooze expired 2026-12-01` dim
+  once the day has passed (in UTC, as temoc counts). `import X` reads as a
+  dim line. md4c needs a blank line between the directives and the table,
+  as temoc's own files have.
+- **Test tables**: in the table after a `decisionTable` directive, a column
+  whose header has a `?` holds expected values and is cyan, header and
+  cells; a `# comment` column is dim, and is the first to shrink when the
+  table is too wide. Other tables are as below.
+- **Marks** (`02-plugins.md`): on a file's tab, every plugin's marks on
+  that file. Each line gets a 3-column gutter, left of any table, with the
+  glyph of the worst mark on its source line, colored by level (ok green,
+  error red, warn yellow, dim dim). An error's or warning's text goes under
+  its line, and for a table row under the table: `✗ line 13 · sum:
+  expected 5, got 4`. A mark on a directive belongs to its badge, its text
+  after it (`🧪 CalculatorFixture · 1 failed, 3 passed`, or on the next line
+  when that doesn't fit); line 0's are at the top. When a plugin's
+  `marks.ref` isn't the head the tab shows, the tab starts with `temoc:
+  results are for 86fa3ad; the PR has moved on`.
 - Rendering (`src/markdown.cpp`, parsed by [md4c](https://github.com/mity/md4c)
   in its GitHub dialect) is pure, text and width in, styled lines out, and
   redone when the terminal's width changes. At most 120 columns wide.
@@ -276,8 +319,8 @@ down you are; `w` or `⏎` opens the PR in the browser, `y` copies its URL,
   breaks the line, `<img alt>` is an image, other tags go and their text
   stays.
 - Every display line keeps the source line it came from (each line of a
-  table row carries the row's), so marks can later be attached to table rows
-  by line number, e.g. temoc acceptance-test results.
+  table row carries the row's, a badge its directive's), which is how marks
+  find their rows.
 - Text goes through the same control-character filter as plugin output.
 
 The `n` note overlay renders notes with the same renderer.
@@ -382,7 +425,8 @@ src/model.hpp         Pr, Tag, state derivation, compact(n), age(t),
                       qualifier editing, local query filter — pure
 src/plugins.hpp/cpp   spawn plugins, read JSONL, restart, fold into the store
 src/ui.hpp/cpp        FTXUI components: tabs, table, pickers, reader, footer
-src/markdown.hpp/cpp  markdown -> styled display lines (md4c) — pure
+src/markdown.hpp/cpp  markdown -> styled display lines (md4c), temoc
+                      directives, marks laid onto the lines — pure
 plugins/slkx/main.cpp the anton-slkx executable (03-plugin-slkx.md)
 plugins/slkx/fold.hpp its pure event fold — testable without slkx
 plugins/llm/main.cpp  the anton-llm executable (04-plugin-llm.md)

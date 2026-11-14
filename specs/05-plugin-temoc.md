@@ -3,7 +3,8 @@
 A C++ executable built from this repo (`plugins/temoc/`) that runs the
 [temoc](https://github.com/killertux/temoc) specs a PR changes and shows how
 they did: a tag on the row, a note you read with `n`, and a mark on every
-table row of the spec files (`marks`, `02-plugins.md`).
+table row of the spec files (`marks`, `02-plugins.md`), which the reader
+shows on the spec's tab (`01-anton.md`, Reader).
 
 temoc runs acceptance tests written as markdown tables. A table is a test
 when a hidden directive comes before it, `[//]: # "decisionTable Fixture"`;

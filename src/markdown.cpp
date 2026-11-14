@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <climits>
 #include <map>
 #include <set>
+#include <sstream>
 
 #include <ftxui/screen/string.hpp>
 #include <md4c.h>
@@ -193,9 +195,27 @@ std::string html_attr(const std::string& tag, const std::string& name) {
   return "";
 }
 
+std::string strip(const std::string& s) {
+  size_t a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t");
+  return a == std::string::npos ? "" : s.substr(a, b - a + 1);
+}
+
+unsigned level_style(const std::string& level) {
+  return level == "ok" ? Ok : level == "error" ? Error : level == "warn" ? Warn : Dim;
+}
+
+int rank(const std::string& level) { return level == "error" ? 3 : level == "warn" ? 2 : level == "ok" ? 1 : 0; }
+
+// What a mark shows in a gutter: its glyph, at most two cells.
+std::string glyph(const Mark& m) { return m.glyph.empty() ? "•" : cut(m.glyph, 2); }
+
 struct Renderer {
   const std::string& doc;
   int width;
+  std::string today;
+  std::vector<Directive> dirs;
+  size_t next_dir = 0;  // the first directive not shown yet
+  bool test_next = false;  // a decisionTable badge was the last line out: the next table is a test
   std::vector<size_t> line_starts;
   std::vector<Line> out;
 
@@ -247,7 +267,7 @@ struct Renderer {
   std::vector<MD_ALIGN> aligns;
   MD_ALIGN cell_align = MD_ALIGN_DEFAULT;
 
-  Renderer(const std::string& d, int w) : doc(d), width(w) {
+  Renderer(const std::string& d, int w, const std::string& t) : doc(d), width(w), today(t), dirs(directives(d)) {
     line_starts.push_back(0);
     for (size_t i = 0; i < doc.size(); ++i)
       if (doc[i] == '\n') line_starts.push_back(i + 1);
@@ -273,7 +293,37 @@ struct Renderer {
     gap_depth = std::min(gap_depth, boxes.size());
   }
 
-  void emit(std::vector<Span> spans, int src, int head = 0) {
+  // The directives above source line src, as badge lines: md4c renders them
+  // as nothing, and they say what a table tests. Pushed bare, without the
+  // boxes' prefixes: a directive belongs to no list or quote.
+  void badges_before(int src) {
+    for (; next_dir < dirs.size() && dirs[next_dir].line < src; ++next_dir) {
+      const Directive& d = dirs[next_dir];
+      std::vector<Span> spans;
+      if (d.import) {
+        spans.push_back({"import " + d.target, Dim});
+      } else {
+        spans.push_back({"🧪 " + d.target, Bold});
+        if (expired(d, today)) spans.push_back({" · snooze expired " + d.snooze, Dim});
+        else if (!d.snooze.empty()) spans.push_back({" · snoozed until " + d.snooze, Warn});
+      }
+      if (gap && !out.empty()) out.emplace_back();
+      gap = false;
+      gap_depth = SIZE_MAX;
+      for (auto& w : wrap(spans, width)) {
+        Line l;
+        l.spans = std::move(w);
+        l.src = d.line;
+        l.part = Part::Badge;
+        out.push_back(std::move(l));
+      }
+      test_next = !d.import;
+    }
+  }
+
+  void emit(std::vector<Span> spans, int src, int head = 0, Part part = Part::Text) {
+    if (src > 0) badges_before(src);
+    if (!in_table) test_next = false;
     if (gap && !out.empty()) {
       Line blank;
       for (size_t i = 0; i < boxes.size() && i < gap_depth; ++i) add(blank.spans, boxes[i].rest, boxes[i].style);
@@ -289,6 +339,7 @@ struct Renderer {
     for (auto& s : spans) add(l.spans, s.text, s.style);
     l.src = src;
     l.heading = head;
+    l.part = part;
     out.push_back(std::move(l));
   }
 
@@ -418,21 +469,41 @@ struct Renderer {
     size_t ncols = aligns.size();
     for (auto& r : rows) ncols = std::max(ncols, r.cells.size());
     if (ncols == 0) return;
+    for (auto& r : rows)
+      if (r.src) {
+        badges_before(r.src);
+        break;
+      }
+    // A temoc test: a header with a "?" is an output, the expected values,
+    // and one starting with "#" a comment temoc never reads.
+    std::vector<unsigned> col_style(ncols, 0);
+    if (test_next && rows[0].head)
+      for (size_t c = 0; c < rows[0].cells.size(); ++c) {
+        std::string h = strip(text_of(rows[0].cells[c]));
+        col_style[c] = h.starts_with("#") ? Dim : h.find('?') != std::string::npos ? Output : 0;
+      }
+    test_next = false;
     std::vector<int> w(ncols, 1);
     for (auto& r : rows)
       for (size_t c = 0; c < r.cells.size(); ++c) w[c] = std::max(w[c], cells(text_of(r.cells[c])));
     int total = 1;
     for (int x : w) total += x + 3;
+    // A test's comments give way first: its inputs and outputs are the test.
+    for (size_t c = 0; c < ncols && total > avail(); ++c)
+      if (int give = std::min(total - avail(), w[c] - 6); col_style[c] == Dim && give > 0) {
+        w[c] -= give;
+        total -= give;
+      }
     while (total > avail()) {
       auto widest = std::max_element(w.begin(), w.end());
       if (*widest <= 2) break;
       --*widest;
       --total;
     }
-    auto border = [&](const char* l, const char* m, const char* r) {
+    auto border = [&](const char* l, const char* m, const char* r, Part part = Part::Table) {
       std::string s = l;
       for (size_t c = 0; c < ncols; ++c) s += repeat("─", w[c] + 2) + (c + 1 < ncols ? m : r);
-      emit({{s, Dim}}, 0);
+      emit({{s, Dim}}, 0, 0, part);
     };
     bool tall = false;  // a wrapped row: separate every row, or they blur
     std::vector<std::vector<std::vector<std::vector<Span>>>> wrapped;
@@ -440,8 +511,7 @@ struct Renderer {
       wrapped.emplace_back();
       for (size_t c = 0; c < ncols; ++c) {
         std::vector<Span> cell = c < r.cells.size() ? r.cells[c] : std::vector<Span>{};
-        if (r.head)
-          for (auto& s : cell) s.style |= Bold;
+        for (auto& s : cell) s.style |= col_style[c] | (r.head ? Bold : 0);
         wrapped.back().push_back(wrap(cell, w[c]));
         tall = tall || wrapped.back().back().size() > 1;
       }
@@ -463,12 +533,12 @@ struct Renderer {
           add(line, std::string(static_cast<size_t>(1 + std::max(0, pad - left)), ' '), 0);
           add(line, "│", Dim);
         }
-        emit(std::move(line), rows[ri].src);
+        emit(std::move(line), rows[ri].src, 0, Part::Table);
       }
       bool last = ri + 1 == rows.size();
       if (!last && (rows[ri].head != rows[ri + 1].head || tall)) border("├", "┼", "┤");
     }
-    border("└", "┴", "┘");
+    border("└", "┴", "┘", Part::TableEnd);
   }
 
   // -- md4c callbacks -------------------------------------------------------
@@ -638,9 +708,146 @@ int call(void* u, F f) {
 
 }  // namespace
 
-std::vector<Line> render(const std::string& markdown, int width) {
+std::vector<Directive> directives(const std::string& markdown) {
+  std::vector<Directive> out;
+  std::istringstream in(markdown);
+  std::string fence;  // the open fence's marker
+  int n = 0;
+  for (std::string l; std::getline(in, l);) {
+    ++n;
+    size_t i = l.find_first_not_of(' ');
+    if (i == std::string::npos || i > 3) continue;
+    if (l.compare(i, 3, "```") == 0 || l.compare(i, 3, "~~~") == 0) {
+      if (fence.empty()) fence = l.substr(i, 3);
+      else if (fence == l.substr(i, 3)) fence.clear();
+      continue;
+    }
+    if (!fence.empty() || l.compare(i, 5, "[//]:") != 0) continue;
+    size_t hash = l.find_first_not_of(" \t", i + 5);
+    if (hash == std::string::npos || l[hash] != '#') continue;
+    size_t q = l.find_first_not_of(" \t", hash + 1);
+    if (q == std::string::npos || q == hash + 1 || (l[q] != '"' && l[q] != '\'' && l[q] != '(')) continue;
+    size_t e = l.find_last_of(l[q] == '(' ? ')' : l[q]);
+    if (e == std::string::npos || e <= q || l.find_first_not_of(" \t", e + 1) != std::string::npos) continue;
+    // As temoc reads the title: the command, a space, its argument.
+    std::string title = l.substr(q + 1, e - q - 1);
+    size_t sp = title.find(' ');
+    if (sp == std::string::npos) continue;
+    std::string cmd = title.substr(0, sp), arg = strip(title.substr(sp + 1));
+    Directive d;
+    d.line = n;
+    if (cmd == "import") {
+      d.import = true;
+      d.target = arg;
+    } else if (cmd == "decisionTable") {
+      size_t dash = arg.find(" -- ");
+      d.target = strip(arg.substr(0, dash));
+      std::string rest = dash == std::string::npos ? "" : strip(arg.substr(dash + 4));
+      if (rest.starts_with("snooze until")) d.snooze = strip(rest.substr(12));
+    } else {
+      continue;
+    }
+    if (!d.target.empty()) out.push_back(d);
+  }
+  return out;
+}
+
+std::vector<Line> annotate(const std::vector<Line>& lines, const std::vector<Mark>& marks, int width) {
+  // Each mark goes on the first display line of the nearest source line at
+  // or above it; none (line 0, or above everything): the top.
+  std::map<int, size_t> first;
+  for (size_t i = 0; i < lines.size(); ++i)
+    if (lines[i].src > 0) first.emplace(lines[i].src, i);
+  std::vector<std::vector<const Mark*>> on(lines.size());
+  std::vector<const Mark*> top;
+  for (auto& m : marks) {
+    auto it = first.upper_bound(m.line);
+    if (it == first.begin()) top.push_back(&m);
+    else on[std::prev(it)->second].push_back(&m);
+  }
+  // Texts go after the block: a badge's whole, a table's bottom border, a
+  // paragraph's last wrapped line.
+  std::map<size_t, std::vector<const Mark*>> after;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (on[i].empty()) continue;
+    size_t end = i;
+    if (lines[i].part == Part::Table)
+      while (lines[end].part != Part::TableEnd && end + 1 < lines.size()) ++end;
+    else
+      while (end + 1 < lines.size() && lines[end + 1].src == lines[i].src && lines[end + 1].part == lines[i].part) ++end;
+    for (auto* m : on[i])
+      if (!m->text.empty() && (lines[i].part == Part::Badge || m->level == "error" || m->level == "warn"))
+        after[end].push_back(m);
+  }
+
+  std::vector<Line> out;
+  auto gutter = [](const std::vector<const Mark*>& ms) -> Span {
+    if (ms.empty()) return {std::string(kGutter, ' '), 0};
+    const Mark* w = *std::max_element(ms.begin(), ms.end(),
+                                      [](const Mark* a, const Mark* b) { return rank(a->level) < rank(b->level); });
+    std::string g = glyph(*w);
+    return {g + std::string(static_cast<size_t>(std::max(0, kGutter - cells(g))), ' '), level_style(w->level)};
+  };
+  // spans wrapped past the gutter, which the first line may fill.
+  auto lines_of = [&](const std::vector<Span>& spans, Span head, int indent) {
+    auto wrapped = wrap(spans, std::max(8, width - kGutter - indent));
+    for (size_t k = 0; k < wrapped.size(); ++k) {
+      Line l;
+      l.spans.push_back(k ? Span{std::string(static_cast<size_t>(kGutter + indent), ' '), 0} : head);
+      for (auto& s : wrapped[k]) add(l.spans, s.text, s.style);
+      out.push_back(std::move(l));
+    }
+  };
+  for (auto* m : top) lines_of({{m->text, 0}}, gutter({m}), 0);
+  if (!top.empty() && !lines.empty()) out.emplace_back();
+  for (size_t i = 0; i < lines.size(); ++i) {
+    Line l = lines[i];
+    l.spans.insert(l.spans.begin(), gutter(on[i]));
+    auto it = after.find(i);
+    if (it == after.end()) {
+      out.push_back(std::move(l));
+      continue;
+    }
+    if (l.part == Part::Badge) {  // on the badge if it fits, else under it
+      std::vector<Span> extra;
+      for (auto* m : it->second) {
+        extra.push_back({" · ", Dim});
+        extra.push_back({m->text, level_style(m->level)});
+      }
+      bool fits = cells(text_of(l.spans)) + cells(text_of(extra)) <= width;
+      if (fits) l.spans.insert(l.spans.end(), extra.begin(), extra.end());
+      out.push_back(std::move(l));
+      if (!fits)
+        for (auto* m : it->second)  // under the fixture's name, past "🧪 "
+          lines_of({{m->text, level_style(m->level)}}, {std::string(kGutter + 3, ' '), 0}, 3);
+      continue;
+    }
+    out.push_back(std::move(l));
+    for (auto* m : it->second)
+      lines_of({{glyph(*m), level_style(m->level)}, {" line " + std::to_string(m->line) + " ·", Dim}, {" " + m->text, 0}},
+               {std::string(kGutter, ' '), 0}, 2);
+  }
+  return out;
+}
+
+std::vector<Count> tally(const std::vector<Mark>& marks, const std::vector<Directive>& dirs) {
+  std::set<int> sums = {0};
+  for (auto& d : dirs) sums.insert(d.line);
+  std::vector<Count> out;
+  for (const char* level : {"ok", "error", "warn", "dim"})
+    for (auto& m : marks) {
+      if (m.level != level || sums.count(m.line)) continue;
+      std::string g = glyph(m);
+      auto it = std::find_if(out.begin(), out.end(), [&](const Count& c) { return c.glyph == g && c.style == level_style(level); });
+      if (it == out.end()) out.push_back({g, level_style(level), 1});
+      else ++it->n;
+    }
+  return out;
+}
+
+std::vector<Line> render(const std::string& markdown, int width, const std::string& today) {
   std::string doc = printable(markdown);
-  Renderer r(doc, std::max(10, width));
+  Renderer r(doc, std::max(10, width), today);
   MD_PARSER p{};
   p.flags = MD_DIALECT_GITHUB;
   p.enter_block = [](MD_BLOCKTYPE t, void* d, void* u) { return call(u, [&](Renderer& r) { r.enter_block(t, d); }); };
@@ -651,6 +858,7 @@ std::vector<Line> render(const std::string& markdown, int width) {
     return call(u, [&](Renderer& r) { r.text(t, s, n); });
   };
   md_parse(doc.data(), static_cast<MD_SIZE>(doc.size()), &p, &r);
+  r.badges_before(INT_MAX);  // directives after the last block
   return std::move(r.out);
 }
 

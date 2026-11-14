@@ -128,6 +128,38 @@ int main() {
   apply_line(st, R"({"pr":"o/r#1"})");
   assert(!st.prs.count(url));  // a clearing line forgets the PR
 
+  // marks: a ref and lines; junk lines are skipped, not the whole line
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"f9ec853","lines":[)"
+                 R"({"file":"s/a.md","line":13,"level":"error","glyph":"✗","text":"sum: expected 5,\ngot 4\u001b"},)"
+                 R"({"file":"s/a.md","line":0,"level":"ok","glyph":"✓","text":"11 passed"},)"
+                 R"({"file":"s/a.md","line":7,"level":"loud"},)"
+                 R"({"file":"s/a.md","line":-1},{"file":"s/a.md","line":"3"},{"file":"s/a.md"},)"
+                 R"({"file":"s/a.md","line":99999999999},{"line":4},{"file":"","line":4},"x",7]}})");
+  assert(st.prs.count(url) && st.prs[url].marks_ref == "f9ec853");  // marks alone keep the PR
+  {
+    auto& ms = st.prs[url].marks;
+    assert(ms.size() == 3);
+    assert(ms[0].file == "s/a.md" && ms[0].line == 13 && ms[0].level == "error" && ms[0].glyph == "✗");
+    assert(ms[0].text == "sum: expected 5, got 4");  // one row: newline to space, no escape
+    assert(ms[1].line == 0 && ms[1].level == "ok");
+    assert(ms[2].level == "dim" && ms[2].glyph.empty() && ms[2].text.empty());  // unknown level reads dim
+  }
+  apply_line(st, R"({"pr":"o/r#1","marks":"junk","tags":[{"text":"t"}]})");
+  assert(st.prs[url].marks.empty() && st.prs[url].marks_ref.empty());  // junk marks are none
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"abc","lines":[{"file":"a.md","line":1,"level":"ok"}]}})");
+  apply_line(st, R"({"pr":"o/r#1","tags":[{"text":"t"}]})");
+  assert(st.prs[url].marks.empty() && st.prs[url].marks_ref.empty());  // omitted = none
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"abc","lines":[]}})");
+  assert(!st.prs.count(url));  // no lines: nothing to say
+
+  // the reader's tab names: basenames, with parents only where two collide
+  assert(path_tail("a/b/c.md", 1) == "c.md" && path_tail("a/b/c.md", 2) == "b/c.md" &&
+         path_tail("a/b/c.md", 5) == "a/b/c.md" && path_tail("c.md", 1) == "c.md");
+  assert((short_names({"specs/a.md", "docs/b.md"}) == std::vector<std::string>{"a.md", "b.md"}));
+  assert((short_names({"x/api/README.md", "y/web/README.md", "README.md", "z.md"}) ==
+          std::vector<std::string>{"api/README.md", "web/README.md", "README.md", "z.md"}));
+  assert((short_names({"a/x.md", "b/a/x.md"}) == std::vector<std::string>{"a/x.md", "b/a/x.md"}));
+
   // recent: open, or closed/merged within the window
   assert(duration_secs("24h") == 86400 && duration_secs("2d") == 172800);
   assert(duration_secs("24") == 0 && duration_secs("h") == 0 && duration_secs("1w") == 0);

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Made-up data for anton's screenshot. Two roles:
+"""Made-up data for anton's screenshot. Three roles:
 
   demo.py gh ...    stands in for `gh` (auth status, api graphql, pr view
-                    --web and --json body)
+                    --web and --json body, a PR's files and their contents)
   demo.py plugin    stands in for anton-slkx: the code-review list, 👀 tags,
                     deploy statuses
+  demo.py temoc     stands in for anton-temoc: one PR's spec results, as a
+                    tag, a note and marks on the spec's rows
 
 Run it through ./run.sh. Nothing here talks to GitHub or Slack.
 """
@@ -195,6 +197,62 @@ remove access for people who *don't*, so it has to be pushed.
 }
 
 
+# The markdown files a PR changes (`⏎`, then Tab), at its head commit. 4812
+# changes a temoc spec and a doc that share a name.
+HEAD = "3f9c2a1e5b7d4c6a8e0f1b2c3d4e5f60718293a4"
+FILES = {
+    4812: {
+        "specs/onboarding.md": """# Onboarding steps
+
+Which onboarding steps a new workspace sees, by plan.
+
+[//]: # "import Onboarding.Fixtures"
+[//]: # "decisionTable StepsFixture"
+
+| plan       | seats | # why                    | team step? | steps? |
+| ---------- | ----- | ------------------------ | ---------- | ------ |
+| Solo       | 1     | nobody to invite         | skipped    | 4      |
+| Solo trial | null  | trials have no seats yet | skipped    | 4      |
+| Team       | 5     |                          | shown      | 5      |
+| Enterprise | 250   | invites go through SCIM  | shown      | 5      |
+
+An upgrade mid-flow brings the team step back. Not built yet:
+
+[//]: # "decisionTable UpgradeFixture -- snooze until 2026-12-15"
+
+| from | to   | at step | team step? |
+| ---- | ---- | ------- | ---------- |
+| Solo | Team | billing | shown      |
+| Solo | Team | profile | shown      |
+
+The checklist hides what the steps skip:
+
+[//]: # "decisionTable ChecklistFixture#items"
+
+| plan | items?                                |
+| ---- | ------------------------------------- |
+| Solo | profile, billing, first project       |
+| Team | profile, billing, team, first project |
+""",
+        "docs/onboarding.md": """# Onboarding
+
+A new workspace walks through four or five steps: **profile**, **billing**,
+**team** (plans with more than one seat), **first project**, and a tour.
+
+Each step can be skipped and comes back in the checklist.
+""",
+    },
+}
+
+
+def spec_line(num, path, start):
+    """The 1-based line of FILES[num][path] that starts with `start`."""
+    for i, l in enumerate(FILES[num][path].split("\n"), 1):
+        if l.startswith(start):
+            return i
+    raise KeyError(start)
+
+
 def iso(t):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
@@ -226,8 +284,20 @@ def node(pr):
 def gh(args):
     if args[:2] == ["pr", "view"] and "--json" in args:  # the reader: a PR's body
         num = int(args[2].rstrip("/").split("/")[-1])
-        print(json.dumps({"body": BODIES.get(num, "")}))
+        print(json.dumps({"body": BODIES.get(num, ""), "headRefOid": HEAD}))
         return 0
+    if args[:2] == ["api", "--paginate"]:  # repos/acme/<repo>/pulls/<n>/files, filenames
+        for path in FILES.get(int(args[2].split("/")[4]), {}):
+            print(path)
+        return 0
+    if args[:2] == ["api", "-H"]:  # repos/acme/<repo>/contents/<path>?ref=<sha>, raw
+        m = re.match(r"repos/acme/[^/]+/contents/(.*)\?ref=", args[3])
+        for files in FILES.values():
+            if m and m.group(1) in files:
+                sys.stdout.write(files[m.group(1)])
+                return 0
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        return 1
     if args[:2] == ["auth", "status"] or args[:2] == ["pr", "view"]:
         return 0
     if args[:2] != ["api", "graphql"]:
@@ -284,10 +354,45 @@ def plugin():
     time.sleep(10 ** 9)
 
 
+def temoc():
+    """What anton-temoc says after `T` on 4812: one failure, a snoozed table,
+    an error, and the rest passing."""
+    spec = "specs/onboarding.md"
+    at = lambda start: spec_line(4812, spec, start)
+    def mark(line, level, glyph, text=""):
+        return {"file": spec, "line": line, "level": level, "glyph": glyph, "text": text}
+    ok, bad = ("ok", "✓"), ("error", "✗")
+    marks = [
+        mark(0, *bad, "failed: 1 error, 1 failed, 5 passed, 1 snoozed"),
+        mark(at('[//]: # "decisionTable StepsFixture'), *bad, "1 failed, 3 passed"),
+        mark(at("| Solo       |"), *ok),
+        mark(at("| Solo trial |"), *bad, "teamStep: expected skipped, got shown"),
+        mark(at("| Team       |"), *ok),
+        mark(at("| Enterprise |"), *ok),
+        mark(at('[//]: # "decisionTable UpgradeFixture'), "warn", "💤", "1 snoozed, 1 passed"),
+        mark(at("| Solo | Team | billing"), "warn", "💤",
+             "snoozed until 2026-12-15: teamStep: expected shown, got skipped"),
+        mark(at("| Solo | Team | profile"), *ok),
+        mark(at('[//]: # "decisionTable ChecklistFixture'), *bad, "1 error, 1 passed"),
+        mark(at("| Solo | profile"), *ok),
+        mark(at("| Team | profile"), *bad, "items: NullPointerException: plan.seats is null"),
+    ]
+    print(json.dumps({
+        "pr": "https://github.com/acme/core/pull/4812",
+        "tags": [{"glyph": "🧪", "text": "2 ✗ 5 ✓ 💤 1", "hint": "temoc at 3f9c2a1: 1 error, 1 failed, 5 passed"}],
+        "note": f"temoc at `3f9c2a1`: 1 error, 1 failed, 5 passed, 1 snoozed\n\n**{spec}**: failed\n"
+                f"- `{spec}:{at('| Solo trial |')}` teamStep: expected skipped, got shown\n"
+                f"- `{spec}:{at('| Team | profile')}` items: NullPointerException: plan.seats is null\n",
+        "marks": {"ref": HEAD, "lines": marks},
+    }, ensure_ascii=False), flush=True)
+
+
 if __name__ == "__main__":
     role = sys.argv[1] if len(sys.argv) > 1 else ""
     if role == "gh":
         sys.exit(gh(sys.argv[2:]))
     if role == "plugin":
         plugin()
-    sys.exit("usage: demo.py gh ... | demo.py plugin")
+    if role == "temoc":
+        sys.exit(temoc())
+    sys.exit("usage: demo.py gh ... | demo.py plugin | demo.py temoc")

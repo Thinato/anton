@@ -194,13 +194,68 @@ Fetch fetch_states(const std::vector<std::string>& urls) {
   return f;
 }
 
-std::string fetch_body(const std::string& url, std::string& error) {
-  Result r = run({"gh", "pr", "view", url, "--json", "body"}, "", true, 30);
+static std::string gh_error(const Result& r) {
+  std::string e = r.timed_out ? "gh timed out" : first_line(r.err.empty() ? r.out : r.err);
+  return e.empty() ? "gh: unreadable response" : e;
+}
+
+std::string fetch_body(const std::string& url, std::string& head, std::string& error) {
+  Result r = run({"gh", "pr", "view", url, "--json", "body,headRefOid"}, "", true, 30);
   json j = json::parse(r.out, nullptr, false);
-  if (r.code == 0 && j.is_object()) return sget(j, "body");
-  error = r.timed_out ? "gh timed out" : first_line(r.err.empty() ? r.out : r.err);
-  if (error.empty()) error = "gh: unreadable response";
+  if (r.code == 0 && j.is_object()) {
+    head = sget(j, "headRefOid");
+    return sget(j, "body");
+  }
+  error = gh_error(r);
   return "";
+}
+
+// "docs/a b.md" -> "docs/a%20b.md": a path as one segment of the contents URL.
+static std::string url_path(const std::string& path) {
+  static const char* hex = "0123456789ABCDEF";
+  std::string out;
+  for (unsigned char c : path)
+    if (std::isalnum(c) || c == '/' || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    }
+  return out;
+}
+
+std::vector<File> fetch_md_files(const std::string& url, const std::string& head, std::string& error) {
+  auto ref = parse_ref(url);
+  if (!ref) {
+    error = "not a PR URL: " + url;
+    return {};
+  }
+  std::string repo = "repos/" + ref->owner + "/" + ref->name;
+  Result r = run({"gh", "api", "--paginate", repo + "/pulls/" + std::to_string(ref->number) + "/files", "--jq",
+                  ".[] | select(.status != \"removed\") | .filename"},
+                 "", true, 60);
+  if (r.code != 0) {
+    error = gh_error(r);
+    return {};
+  }
+  std::vector<File> files;
+  size_t at = 0;
+  for (size_t nl; (nl = r.out.find('\n', at)) != std::string::npos; at = nl + 1) {
+    std::string path = r.out.substr(at, nl - at), low = lower(path);
+    if (low.ends_with(".md") || low.ends_with(".markdown")) files.push_back({path, "", ""});
+  }
+  // ponytail: every file is fetched up front, 6 at a time, because tab order
+  // (specs first) needs their text; a PR with hundreds of .md files waits for
+  // all of them. Fetch per tab and sort on what's in if that ever matters.
+  parallel_chunks(files.size(), 1, [&](size_t a, size_t) {
+    Result c = run({"gh", "api", "-H", "Accept: application/vnd.github.raw",
+                    repo + "/contents/" + url_path(files[a].path) + "?ref=" + head},
+                   "", true, 60);
+    if (c.code == 0) files[a].text = c.out;
+    else files[a].error = gh_error(c);
+  });
+  return files;
 }
 
 }  // namespace anton
