@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Made-up data for anton's screenshot. Two roles:
 
-  demo.py gh ...    stands in for `gh` (auth status, api graphql, pr view)
+  demo.py gh ...    stands in for `gh` (auth status, api graphql, pr view
+                    --web and --json body)
   demo.py plugin    stands in for anton-slkx: the code-review list, 👀 tags,
                     deploy statuses
 
@@ -108,6 +109,92 @@ const steps = useMemo(() => buildSteps(plan), [plan]);
 }
 
 
+# PR descriptions (`⏎` reads one). Shaped like real ones: a template's
+# comments and <details>, a task list, a table, code.
+BODIES = {
+    4812: """<!-- Describe the change and link the ticket. Delete what doesn't apply. -->
+
+## What
+
+Single-seat plans skip the **Invite your team** step of onboarding. Nobody on a
+one-seat plan can invite anyone, so the step only ever showed an upgrade wall.
+
+Closes [CORE-2210](https://linear.app/acme/issue/CORE-2210).
+
+## How it behaves
+
+| Plan        | Seats | Team step | Notes                                   |
+|-------------|------:|:---------:|-----------------------------------------|
+| Solo        |     1 |  skipped  | the step's checklist item is hidden too |
+| Solo (trial)|  null |  skipped  | trials report no seats until checkout   |
+| Team        |     5 |   shown   |                                         |
+| Enterprise  |   250 |   shown   | invites go through SCIM when it's on    |
+
+## Checklist
+
+- [x] Unit tests for `buildSteps()`
+- [x] Tried it on a fresh Solo workspace
+- [ ] Copy reviewed by design
+- [ ] Analytics event renamed to `onboarding_team_step_skipped`
+
+```ts
+export function buildSteps(plan: Plan): Step[] {
+  return ALL_STEPS.filter((s) => s.id !== "team" || (plan.seats ?? 1) > 1);
+}
+```
+
+<details>
+<summary>Screenshots</summary>
+
+![onboarding without the team step](https://example.com/onboarding.png)
+
+Before: 5 steps. After: 4 steps, and the progress bar says so.
+
+</details>
+
+> **Note**
+> The flag `skipTeamStep` stays in the payload for one release so old
+> clients don't break.
+""",
+    4802: """<!-- PR template: what, why, how to test -->
+
+SCIM group sync: groups pushed by the identity provider become teams,
+and membership follows them. Part of the SSO epic ([CORE-2187](https://linear.app/acme/issue/CORE-2187)).
+
+### Endpoints
+
+| Method | Path                         | Status | What it does                                                    | Rate limit |
+|--------|------------------------------|:------:|-----------------------------------------------------------------|-----------:|
+| GET    | `/scim/v2/Groups`            | 200    | lists groups, filtered by `displayName eq "..."`                 | 100/min    |
+| POST   | `/scim/v2/Groups`            | 201    | creates the team, members included                              | 20/min     |
+| PATCH  | `/scim/v2/Groups/{id}`       | 200    | add/remove members; `replace` on `displayName` renames the team | 100/min    |
+| DELETE | `/scim/v2/Groups/{id}`       | 204    | archives the team (never deletes its projects)                  | 20/min     |
+
+### How to test
+
+1. Start the IdP mock: `make idp-mock`
+2. Point a workspace at it:
+   ```sh
+   acme-admin sso set --workspace demo --scim-url http://localhost:9099/scim/v2
+   ```
+3. Push a group from the mock and watch the team appear.
+   - Renames show up within a second.
+   - Removing the last member archives nothing: empty teams stay.
+
+<details>
+<summary>Why not sync on login instead?</summary>
+
+Login-time sync only learns about people who log in. Offboarding has to
+remove access for people who *don't*, so it has to be pushed.
+
+</details>
+
+- [x] Contract tests against the SCIM 2.0 spec (RFC 7644)
+- [ ] Load test with 10k-member groups
+""",
+}
+
+
 def iso(t):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
@@ -137,6 +224,10 @@ def node(pr):
 
 
 def gh(args):
+    if args[:2] == ["pr", "view"] and "--json" in args:  # the reader: a PR's body
+        num = int(args[2].rstrip("/").split("/")[-1])
+        print(json.dumps({"body": BODIES.get(num, "")}))
+        return 0
     if args[:2] == ["auth", "status"] or args[:2] == ["pr", "view"]:
         return 0
     if args[:2] != ["api", "graphql"]:

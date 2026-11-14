@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(anton VERSION 0.1.0 LANGUAGES CXX)
+project(anton VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,18 @@ FetchContent_Declare(ftxui
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(ftxui)
 
+# md4c is one C file. Built here as a static library rather than through its
+# own CMakeLists, which defaults to a shared library and adds install rules
+# for it (SOURCE_SUBDIR points at nothing, so only the sources are fetched).
+FetchContent_Declare(md4c
+  URL https://github.com/mity/md4c/archive/refs/tags/v0.6.0.tar.gz
+  URL_HASH SHA256=4d151298125a81da3b2efa2e0eed8bdb7a9318569804e4fa4d7a2375ab83ef70
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR none)
+FetchContent_MakeAvailable(md4c)
+add_library(md4c STATIC ${md4c_SOURCE_DIR}/src/md4c.c)
+target_include_directories(md4c SYSTEM PUBLIC ${md4c_SOURCE_DIR}/src)
+
 if(MSVC)
   set(WARN /W4)
 else()
@@ -42,6 +54,7 @@ endif()
 
 add_executable(anton
   src/main.cpp
+  src/markdown.cpp
   src/proc.cpp
   src/github.cpp
   src/plugins.cpp
@@ -50,7 +63,7 @@ add_executable(anton
 )
 target_include_directories(anton PRIVATE src)
 target_link_libraries(anton PRIVATE nlohmann_json::nlohmann_json
-  ftxui::component)
+  ftxui::component md4c)
 target_compile_options(anton PRIVATE ${WARN})
 # Release builds pass the tag (release.yml); "dev" never self-updates.
 set(ANTON_VERSION "dev" CACHE STRING "Version baked into anton")
@@ -76,10 +89,13 @@ endif()
 # Self-checks: assert-based mains over the pure headers. -UNDEBUG because a
 # Release build defines NDEBUG, which would compile every assert away.
 enable_testing()
-foreach(t IN ITEMS model fold llm)
+foreach(t IN ITEMS model fold llm markdown)
   add_executable(${t}_check tests/${t}_check.cpp)
   target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm)
   target_link_libraries(${t}_check PRIVATE nlohmann_json::nlohmann_json)
   target_compile_options(${t}_check PRIVATE -UNDEBUG ${WARN})
   add_test(NAME ${t}_check COMMAND ${t}_check)
 endforeach()
+# The markdown core is a .cpp over md4c, measured with FTXUI's string_width.
+target_sources(markdown_check PRIVATE src/markdown.cpp)
+target_link_libraries(markdown_check PRIVATE md4c ftxui::screen)

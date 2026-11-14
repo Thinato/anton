@@ -8,8 +8,9 @@ anton lists the GitHub PRs that concern you: what you opened, what you were
 asked to review, what your team posted in `#code-review`. Each row shows the
 size of the change, where it stands (approved, conflicting, failing checks,
 queued for deploy, merged), how long it's been open, and who is reviewing it.
-`⏎` opens it in the browser. anton doesn't show diffs and doesn't write
-to GitHub.
+`⏎` reads its description, rendered the way
+[glow](https://github.com/charmbracelet/glow) does, and `w` opens it in the
+browser. anton doesn't show diffs and doesn't write to GitHub.
 
 Named after the critic in *Ratatouille*.
 
@@ -37,7 +38,7 @@ cmake -B build && cmake --build build
 ./build/anton
 ```
 
-Dependencies (FTXUI, nlohmann/json) are fetched by CMake. `cmake --install
+Dependencies (FTXUI, nlohmann/json, md4c) are fetched by CMake. `cmake --install
 build` puts `anton`, `anton-slkx` and `anton-llm` in your prefix.
 
 ## Use
@@ -49,7 +50,8 @@ takes works here.
 | key | |
 | --- | --- |
 | `j` `k` `g` `G` | move |
-| `⏎` / `y` | open in browser / copy URL |
+| `⏎` | read the description (`j` `k` `space` `g` `G` scroll, `q` back) |
+| `w` / `y` | open in browser / copy URL |
 | `/` | edit the query: `is:open review-requested:@me label:bug` |
 | `o` `p` `x` | scope to an org / a repo / clear it |
 | `s` | sort: updated, created, size, repo |
@@ -255,8 +257,9 @@ cmake --build build && ctest --test-dir build
 
 The specs in [specs/](specs/) describe what anton does and why. Change the
 spec when you change the behavior. The logic that matters (state ranking,
-filters, the Slack event fold, the LLM config) is kept in pure headers,
-`src/model.hpp`, `plugins/slkx/fold.hpp` and `plugins/llm/llm.hpp`, checked by the asserts in `tests/`.
+filters, the Slack event fold, the LLM config, the markdown renderer) is kept
+pure, in `src/model.hpp`, `plugins/slkx/fold.hpp`, `plugins/llm/llm.hpp` and
+`src/markdown.cpp`, checked by the asserts in `tests/`.
 
 Work goes through pull requests. CI builds and runs the checks on each one,
 and they must pass to merge. Every merged PR publishes the next release,

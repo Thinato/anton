@@ -19,6 +19,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include "github.hpp"
+#include "markdown.hpp"
 #include "model.hpp"
 #include "plugins.hpp"
 #include "proc.hpp"
@@ -29,7 +30,7 @@ namespace {
 
 using namespace ftxui;
 
-enum class Mode { Normal, Query, Picker, Help, Note };
+enum class Mode { Normal, Query, Picker, Help, Note, Reader };
 
 std::time_t now() { return std::time(nullptr); }
 
@@ -74,6 +75,25 @@ struct Ui {
   bool pick_repo = false;
   std::string note_url;  // the PR whose notes the Note overlay shows
   int note_scroll = 0;   // first line shown
+  std::string reader_url;  // the PR whose description the Reader shows
+  int reader_scroll = 0;
+
+  // A PR's description, fetched when the reader opens it and again when the
+  // PR's updatedAt moves. UI thread.
+  struct Body {
+    std::string text, error;
+    std::time_t updated = -1;  // the updatedAt it was fetched for
+    bool loading = false;
+  };
+  std::map<std::string, Body> bodies;  // by URL
+
+  // Markdown rendered for one width; redone when the text or width changes.
+  struct Rendered {
+    std::string key;
+    int width = -1;
+    std::vector<md::Line> lines;
+  };
+  Rendered reader_md, note_md;
   Component query_input, pick_input;
 
   // Per plugin. Long-running ("exit") plugins fold lines into `live` as they
@@ -706,7 +726,7 @@ struct Ui {
 
   Element render_footer() {
     Elements f = {text(" r refresh  / query  o org  p repo  x clear  s sort:" +
-                       std::string(sort_name(sorts[active])) + "  ⏎ open  y copy  ? help  q quit") |
+                       std::string(sort_name(sorts[active])) + "  ⏎ read  w web  y copy  ? help  q quit") |
                   dim};
     f.push_back(filler());
     if (!update_note.empty()) f.push_back(text("⬆ " + update_note + "  ") | color(Color::Green));
@@ -752,76 +772,145 @@ struct Ui {
            size(WIDTH, GREATER_THAN, 40) | clear_under | center;
   }
 
-  // Word wrap to w columns, by display width. A word wider than w gets a row
-  // of its own and is cut at the edge.
-  static std::vector<std::string> wrap(const std::string& s, int w) {
-    std::vector<std::string> out;
-    std::string cur;
-    size_t at = 0;
-    while (at < s.size()) {
-      size_t sp = s.find(' ', at);
-      std::string word = s.substr(at, sp == std::string::npos ? std::string::npos : sp - at);
-      at = sp == std::string::npos ? s.size() : sp + 1;
-      if (word.empty()) continue;
-      if (!cur.empty() && string_width(cur) + 1 + string_width(word) > w) {
-        out.push_back(cur);
-        cur.clear();
-      }
-      cur += (cur.empty() ? "" : " ") + word;
+  // A rendered markdown line as one row. Wrapped by md::render rather than
+  // by paragraph(), so every element is one row and scrolling reaches the end.
+  static Element md_line(const md::Line& l) {
+    Elements parts;
+    for (auto& sp : l.spans) {
+      Element e = text(sp.text);
+      if (sp.style & md::Bold) e = e | bold;
+      if (sp.style & md::Italic) e = e | italic;
+      if (sp.style & md::Strike) e = e | strikethrough;
+      if (sp.style & md::Link) e = e | underlined;
+      if (sp.style & md::Code) e = e | color(Color::Yellow);
+      if (sp.style & md::Dim) e = e | dim;
+      parts.push_back(e);
     }
-    if (!cur.empty() || out.empty()) out.push_back(cur);
+    Element e = parts.empty() ? text("") : hbox(std::move(parts));
+    if (l.heading == 1) return e | color(Color::Cyan) | inverted;
+    if (l.heading == 2) return e | color(Color::Cyan);
+    if (l.heading > 2) return e | color(Color::Blue);
+    return e;
+  }
+
+  // Rows [scroll, scroll + h) of lines, scroll clamped so the last page is
+  // full. where gets "NN%   " when they don't all fit.
+  static Elements page(const std::vector<md::Line>& lines, int h, int& scroll, std::string& where) {
+    int n = static_cast<int>(lines.size());
+    scroll = std::clamp(scroll, 0, std::max(0, n - h));
+    Elements out;
+    for (int i = scroll; i < std::min(n, scroll + h); ++i) out.push_back(md_line(lines[static_cast<size_t>(i)]));
+    where = n <= h ? "" : std::to_string(100 * std::min(n, scroll + h) / n) + "%   ";
     return out;
   }
 
-  // A plugin's note, usually markdown: prose wrapped (indent kept), headings
-  // bold, code blocks as they are. Wrapped here rather than by paragraph(), so
-  // every element is one row and scrolling can reach the end of a long one.
+  // j/k, space/PgDn, PgUp, g/G on a page `rows` tall; false for any other
+  // key. page() clamps.
+  static bool scroll_key(const Event& e, int& scroll, int rows) {
+    if (e == Event::Character('j') || e == Event::ArrowDown) ++scroll;
+    else if (e == Event::Character('k') || e == Event::ArrowUp) --scroll;
+    else if (e == Event::PageDown || e == Event::Character(' ')) scroll += rows;
+    else if (e == Event::PageUp) scroll -= rows;
+    else if (e == Event::Character('g') || e == Event::Home) scroll = 0;
+    else if (e == Event::Character('G') || e == Event::End) scroll = 1 << 30;
+    else return false;
+    return true;
+  }
+
+  // A plugin's note, usually markdown (an LLM review): rendered like a
+  // description, each note under its plugin's name when there are several.
   Element render_note() {
     auto notes = notes_of(note_url);
     auto term = Terminal::Size();
     int w = std::min(100, term.dimx - 4), h = term.dimy - 4;
     int tw = std::max(10, w - 2), th = std::max(1, h - 3);  // inside the border, above the status line
-    Elements l;
-    for (auto& [name, body] : notes) {
-      if (notes.size() > 1) l.push_back(text("[" + name + "]") | bold | color(Color::Cyan));
-      bool code = false;
-      size_t at = 0;
-      while (at <= body.size()) {
-        size_t nl = body.find('\n', at);
-        std::string line = body.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
-        at = nl == std::string::npos ? body.size() + 1 : nl + 1;
-        size_t indent = std::min(line.find_first_not_of(' '), line.size());
-        bool fence = line.compare(indent, 3, "```") == 0;
-        if (fence) code = !code;
-        if (code || fence) {
-          l.push_back(text(line) | dim);  // y copies what doesn't fit
-          continue;
-        }
-        size_t hashes = line.find_first_not_of('#');
-        bool heading = hashes > 0 && hashes != std::string::npos && line[hashes] == ' ';
-        std::string pad(indent, ' ');
-        for (auto& row : wrap(line.substr(indent), std::max(10, tw - static_cast<int>(indent))))
-          l.push_back(heading ? text(row) | bold : text(pad + row));
+    std::string key;
+    for (auto& [name, body] : notes) key += name + '\0' + body + '\0';
+    if (note_md.key != key || note_md.width != tw) {
+      note_md = {key, tw, {}};
+      for (auto& [name, body] : notes) {
+        if (!note_md.lines.empty()) note_md.lines.emplace_back();
+        if (notes.size() > 1) note_md.lines.push_back({{{"[" + name + "]", md::Bold}}, 0, 2});
+        for (auto& l : md::render(body, tw)) note_md.lines.push_back(std::move(l));
       }
     }
-    if (l.empty()) l.push_back(text("(the note is gone)") | dim);
-    int n = static_cast<int>(l.size());
-    note_scroll = std::clamp(note_scroll, 0, std::max(0, n - th));
-    Elements shown(l.begin() + note_scroll, l.begin() + std::min(n, note_scroll + th));
+    std::string where;
+    Elements shown = notes.empty() ? Elements{text("(the note is gone)") | dim}
+                                   : page(note_md.lines, th, note_scroll, where);
     std::string title = note_url;
     if (auto c = cache.find(note_url); c != cache.end())
       title = c->second.repo + "#" + std::to_string(c->second.number) + "  " + shown_title(c->second.title);
-    std::string where = n <= th ? "" : std::to_string(100 * std::min(n, note_scroll + th) / n) + "%   ";
     return window(text(" " + title + " "),
                   vbox({vbox(std::move(shown)) | flex,
                         text(where + "j/k scroll  g/G top/end  y copy  esc close") | dim})) |
            size(WIDTH, EQUAL, w) | size(HEIGHT, EQUAL, h) | clear_under | center;
   }
 
+  // -- reader -----------------------------------------------------------------
+
+  // Fetches the description off the UI thread, unless it's in for this
+  // updatedAt already or on its way.
+  void want_body(const std::string& url, std::time_t updated) {
+    Body& b = bodies[url];
+    if (b.loading || b.updated == updated) return;
+    b.loading = true;
+    std::thread([this, url, updated] {
+      std::string err, body = fetch_body(url, err);
+      post([this, url, updated, err, body] {
+        Body& b = bodies[url];
+        b.loading = false;
+        b.updated = updated;  // a failure too, or it'd retry every frame; reopening retries
+        b.error = err;
+        if (err.empty()) b.text = body;
+      });
+    }).detach();
+  }
+
+  void open_reader(const Pr& p) {
+    reader_url = p.url;
+    reader_scroll = 0;
+    mode = Mode::Reader;
+    if (!bodies[p.url].error.empty()) bodies[p.url].updated = -1;
+  }
+
+  static int reader_rows() { return std::max(1, Terminal::Size().dimy - 5); }  // header 3, footer 2
+
+  // Full screen: the PR's title and where it lives, then its description as
+  // rendered markdown.
+  Element render_reader() {
+    auto term = Terminal::Size();
+    int w = std::max(10, std::min(120, term.dimx - 4));
+    std::string title = reader_url, where_from = reader_url;
+    if (auto c = cache.find(reader_url); c != cache.end()) {
+      const Pr& p = c->second;
+      want_body(p.url, p.updated);
+      title = shown_title(p.title);
+      const Person* who = person(p.author);
+      where_from = p.repo + "#" + std::to_string(p.number) + "  " +
+                   (who && !who->name.empty() ? who->name : p.author) + "  " + p.url;
+    }
+    const Body& b = bodies[reader_url];
+    if (reader_md.key != b.text || reader_md.width != w) reader_md = {b.text, w, md::render(b.text, w)};
+    std::string where, msg = b.text.empty() ? "" : b.error;  // a failed refetch keeps the old text
+    Elements rows;
+    if (b.text.empty() && b.loading) rows.push_back(text("loading…") | dim);
+    else if (b.text.empty() && !b.error.empty())
+      rows.push_back(text("couldn't load the description: " + b.error) | color(Color::Red));
+    else if (reader_md.lines.empty()) rows.push_back(text("No description.") | dim);
+    else rows = page(reader_md.lines, reader_rows(), reader_scroll, where);
+    Element message = now() < notice_until && !notice.empty() ? text(" " + notice) | color(Color::Cyan)
+                      : !msg.empty()                          ? text(" " + msg) | color(Color::Red)
+                                                              : text("");
+    return vbox({text(" " + title) | bold, text(" " + where_from) | dim, separator(),
+                 hbox({text("  "), vbox(std::move(rows))}) | flex, message,
+                 text(" " + where + "j/k space g/G scroll  w web  y copy URL  q close") | dim});
+  }
+
   Element render_help() {
     Elements l = {
         text("keys") | bold,
-        text("  j/k ↑/↓ g/G   move            ⏎  open in browser   y  copy URL"),
+        text("  j/k ↑/↓ g/G   move            ⏎  read description  w  open in browser"),
+        text("  y             copy URL"),
         text("  r             refresh         /  edit query        s  cycle sort"),
         text("  o / p         pick org / repo x  clear org/repo    1-9 Tab  views"),
         text("  n             read a plugin's note on the PR (an LLM review, say)"),
@@ -860,6 +949,8 @@ struct Ui {
     auto rs = rows(active, &view_err).value_or(std::vector<Pr>{});
     selected = std::clamp(selected, 0, std::max(0, static_cast<int>(rs.size()) - 1));
     request_full(stubs_to_fill());
+
+    if (mode == Mode::Reader) return render_reader();
 
     Element body;
     const View& v = views[active];
@@ -931,14 +1022,16 @@ struct Ui {
       mode = Mode::Normal;
       return true;
     }
-    if (mode == Mode::Note) {  // render() clamps the scroll
+    if (mode == Mode::Reader) {
+      if (e == Event::Escape || e == Event::Character('q')) mode = Mode::Normal;
+      else if (scroll_key(e, reader_scroll, reader_rows())) {}
+      else if (e == Event::Character('w') || e == Event::Return) open(reader_url);
+      else if (e == Event::Character('y')) copy(reader_url);
+      return true;
+    }
+    if (mode == Mode::Note) {
       if (e == Event::Escape || e == Event::Character('q') || e == Event::Character('n')) mode = Mode::Normal;
-      else if (e == Event::Character('j') || e == Event::ArrowDown) ++note_scroll;
-      else if (e == Event::Character('k') || e == Event::ArrowUp) --note_scroll;
-      else if (e == Event::PageDown || e == Event::Character(' ')) note_scroll += 10;
-      else if (e == Event::PageUp) note_scroll -= 10;
-      else if (e == Event::Character('g') || e == Event::Home) note_scroll = 0;
-      else if (e == Event::Character('G') || e == Event::End) note_scroll = 1 << 30;
+      else if (scroll_key(e, note_scroll, 10)) {}
       else if (e == Event::Character('y')) {
         std::string all;
         for (auto& [name, body] : notes_of(note_url)) all += (all.empty() ? "" : "\n\n") + body;
@@ -1004,6 +1097,8 @@ struct Ui {
     } else if (e == Event::Character('G') || e == Event::End) {
       selected = std::max(0, last);
     } else if (e == Event::Return) {
+      if (cur) open_reader(*cur);
+    } else if (e == Event::Character('w')) {
       if (cur) open(cur->url);
     } else if (e == Event::Character('y')) {
       if (cur) copy(cur->url);
