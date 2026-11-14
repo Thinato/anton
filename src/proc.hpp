@@ -40,11 +40,13 @@ int stream(Spawned& s, const std::function<void(const std::string&)>& on_out,
 struct Result {
   int code = -1;
   std::string out, err;
+  bool timed_out = false;
 };
 
 // spawn + stream, collecting output. code -1 and err set if it never started.
+// A timeout (seconds, with new_group) SIGTERMs the child's group when it's up.
 Result run(const std::vector<std::string>& argv, const std::string& input = "",
-           bool new_group = true);
+           bool new_group = true, int timeout = 0);
 
 void kill_group(pid_t pid);
 

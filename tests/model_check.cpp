@@ -194,5 +194,32 @@ int main() {
     assert(expand_home("$HOME/a") == "$HOME/a");
   }
 
+  {  // columns: built-ins by name, in config order; command columns get the PR
+    setenv("HOME", "/home/x", 1);
+    Config c;
+    assert(c.columns.size() == kColumns.size() && c.columns[1].name == "number");  // default: all
+    assert(parse_config(R"({"columns": ["title", "repo", {"name": "CI", "command": ["$HOME/ci", "{repo}#{number}"], "width": 500}]})", c).empty());
+    assert(c.columns.size() == 3 && c.columns[0].name == "title" && c.columns[1].command.empty());
+    assert(c.columns[2].command[0] == "/home/x/ci" && c.columns[2].width == 80 && c.columns[2].timeout == 10);
+    Config bad;
+    assert(parse_config(R"({"columns": ["nubmer"]})", bad).find("nubmer") != std::string::npos);
+    assert(!parse_config(R"({"columns": []})", bad).empty());
+    assert(!parse_config(R"({"columns": [{"name": "x", "command": []}]})", bad).empty());
+    assert(!parse_config(R"({"columns": [{"name": "x"}]})", bad).empty());
+
+    Pr p;
+    p.url = "https://github.com/o/r/pull/12";
+    p.repo = "o/r";
+    p.number = 12;
+    p.draft = true;
+    auto j = pr_json(p);
+    assert(j["number"] == 12 && j["url"] == p.url && j["draft"] == true);
+    assert(fill("{repo}#{number}", j) == "o/r#12");
+    assert(fill("--draft={draft} {nope} {repo", j) == "--draft=true {nope} {repo");
+    assert(fill("{{repo}}", j) == "{o/r}");  // "{repo" isn't a field, "repo" is
+    assert(cell_text("✓ 3/3\nmore\n") == "✓ 3/3" && cell_text("") == "");
+    assert(cell_text("\x1b[31mred\tx  \n") == "[31mred    x");  // no escapes reach the terminal
+  }
+
   std::puts("model_check: all checks passed");
 }

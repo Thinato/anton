@@ -8,7 +8,10 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <thread>
 
 extern char** environ;
@@ -158,16 +161,35 @@ int stream(Spawned& s, const std::function<void(const std::string&)>& on_out,
   return -1;
 }
 
-Result run(const std::vector<std::string>& argv, const std::string& input, bool new_group) {
+Result run(const std::vector<std::string>& argv, const std::string& input, bool new_group, int timeout) {
   Result r;
   Spawned s = spawn(argv, {}, input, new_group);
   if (s.pid == -1) {
     r.err = s.error;
     return r;
   }
+  std::mutex m;
+  std::condition_variable cv;
+  bool done = false;
+  std::thread dog;
+  if (timeout > 0 && new_group)
+    dog = std::thread([&] {
+      std::unique_lock lk(m);
+      if (cv.wait_for(lk, std::chrono::seconds(timeout), [&] { return done; })) return;
+      r.timed_out = true;
+      kill_group(s.pid);
+    });
   r.code = stream(
       s, [&](const std::string& l) { r.out += l + "\n"; },
       [&](const std::string& l) { r.err += l + "\n"; });
+  if (dog.joinable()) {
+    {
+      std::lock_guard lk(m);
+      done = true;
+    }
+    cv.notify_all();
+    dog.join();
+  }
   return r;
 }
 

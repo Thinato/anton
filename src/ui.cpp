@@ -94,6 +94,23 @@ struct Ui {
   std::set<std::string> requested_full;  // UI thread
   std::vector<std::set<std::string>> approvals;  // per plugin: new approvals not yet delivered
 
+  // -- command columns --------------------------------------------------------
+  // A cell runs its command when its PR is first drawn, again after each
+  // refresh and when the PR changes on GitHub. It keeps showing the last
+  // output meanwhile. kColumnJobs commands run at once, from col_jobs (col_mu).
+  struct ColumnCell {
+    std::string text, error;  // error: why the last run failed, "" if it didn't
+    std::time_t updated = 0;  // the PR's updatedAt it ran for
+    int gen = -1;             // the refresh it ran in
+    bool running = false, done = false;
+  };
+  static constexpr int kColumnJobs = 4;
+  std::map<std::pair<size_t, std::string>, ColumnCell> column_cells;  // (column, URL); UI thread
+  int column_gen = 0;  // bumped by refresh()
+  std::mutex col_mu;
+  std::condition_variable col_cv;
+  std::deque<std::function<void()>> col_jobs;
+
   explicit Ui(Config c) : cfg(std::move(c)), views(cfg.views) {
     for (auto& v : views) sorts.push_back(v.is_list() ? Sort::List : Sort::Updated);
     live.resize(cfg.plugins.size());
@@ -264,6 +281,7 @@ struct Ui {
       request_search(effective(v));
     if (plugins) plugins->refresh();
     requested_full.clear();  // stubs whose fill failed get another try
+    ++column_gen;
     last_refresh = now();
   }
 
@@ -524,6 +542,63 @@ struct Ui {
     return paint(cell(who && !who->name.empty() ? who->name : login, 12), who);
   }
 
+  // Runs a command column for a PR off the UI thread; the cell fills in when
+  // it's done.
+  void run_column(size_t ci, const Pr& p, ColumnCell& cc) {
+    cc.running = true;
+    cc.gen = column_gen;
+    cc.updated = p.updated;
+    const Column& col = cfg.columns[ci];
+    nlohmann::json j = pr_json(p);
+    std::vector<std::string> argv;
+    for (auto& a : col.command) argv.push_back(fill(a, j));
+    std::pair<size_t, std::string> key{ci, p.url};
+    {
+      std::lock_guard lk(col_mu);
+      col_jobs.push_back([this, argv, key, input = j.dump() + "\n", timeout = col.timeout] {
+        // ponytail: quitting anton mid-run leaves a hung command to finish on
+        // its own; track pids and kill them on exit if that ever bites.
+        Result r = run(argv, input, true, timeout);
+        std::string err = r.timed_out  ? "timed out after " + std::to_string(timeout) + "s"
+                          : r.code < 0 ? r.err
+                          : r.code != 0 ? "exit " + std::to_string(r.code) + ": " + cell_text(r.err)
+                                        : "";
+        std::string out = err.empty() ? cell_text(r.out) : "";
+        post([this, key, out, err] {
+          ColumnCell& cc = column_cells[key];
+          cc.running = false;
+          cc.done = true;
+          cc.error = err;
+          if (err.empty()) cc.text = out;
+        });
+      });
+    }
+    col_cv.notify_one();
+  }
+
+  void column_worker() {
+    for (;;) {
+      std::function<void()> job;
+      {
+        std::unique_lock lk(col_mu);
+        col_cv.wait(lk, [&] { return !col_jobs.empty(); });
+        job = std::move(col_jobs.front());
+        col_jobs.pop_front();
+      }
+      job();
+    }
+  }
+
+  Element command_cell(size_t ci, const Pr& p) {
+    const Column& col = cfg.columns[ci];
+    if (p.partial) return cell("", col.width);  // its fields aren't in yet
+    ColumnCell& cc = column_cells[{ci, p.url}];
+    if (!cc.running && (cc.gen != column_gen || cc.updated != p.updated)) run_column(ci, p, cc);
+    if (!cc.done) return cell("…", col.width) | dim;
+    if (!cc.error.empty()) return cell("✗", col.width) | color(Color::Red);
+    return cell(cc.text, col.width);
+  }
+
   Element render_table(const std::vector<Pr>& rs) {
     std::set<std::string> row_owners;
     int num_w = 2;
@@ -539,34 +614,70 @@ struct Ui {
     }
     const int tags_w = 16;
 
-    auto header = hbox({text(" "), cell("REPO", repo_w), text("  "), cell_right("#", num_w),
-                        text("  "), cell_right("SIZE", 11), text("  "), cell("STATE", 12),
-                        cell_right("AGE", 4), text("  "), cell("AUTHOR", 12), text(" "),
-                        cell("TAGS", tags_w), text(" "), text("TITLE") | flex}) |
-                  bold | dim;
+    // Columns in config order. gap: spaces after a column (STATE's text never
+    // fills its 12, AGE is right-aligned against it).
+    auto gap = [](const Column& c) {
+      return c.name == "state" || c.name == "title" ? 0 : c.name == "author" || c.name == "tags" ? 1 : 2;
+    };
+    bool flex_col = false;
+    Elements head = {text(" ")};
+    for (auto& c : cfg.columns) {
+      std::string n = c.command.empty() ? c.name : "";
+      head.push_back(!c.command.empty() ? cell(c.name, c.width)
+                     : n == "repo"      ? cell("REPO", repo_w)
+                     : n == "number"    ? cell_right("#", num_w)
+                     : n == "size"      ? cell_right("SIZE", 11)
+                     : n == "state"     ? cell("STATE", 12)
+                     : n == "age"       ? cell_right("AGE", 4)
+                     : n == "author"    ? cell("AUTHOR", 12)
+                     : n == "tags"      ? cell("TAGS", tags_w)
+                                        : text("TITLE") | flex);
+      flex_col = flex_col || n == "title";
+      head.push_back(text(std::string(gap(c), ' ')));
+    }
+    if (!flex_col) head.push_back(filler());
+    auto header = hbox(std::move(head)) | bold | dim;
 
     Elements lines;
     std::time_t t = now();
     for (size_t i = 0; i < rs.size(); ++i) {
       const Pr& p = rs[i];
-      std::string repo = show_owner ? p.repo : p.repo.substr(p.repo.find('/') + 1);
-      Color size_color = Color::Green;
-      switch (size_band(p.additions + p.deletions, cfg.green_below, cfg.red_from)) {
-        case Band::Green: size_color = Color::Green; break;
-        case Band::Yellow: size_color = Color::Yellow; break;
-        case Band::Red: size_color = Color::Red; break;
-      }
-      Element size_el = p.partial ? cell("", 11)
+      Elements row = {text(" ")};
+      for (size_t ci = 0; ci < cfg.columns.size(); ++ci) {
+        const Column& c = cfg.columns[ci];
+        const std::string& n = c.name;
+        if (!c.command.empty()) {
+          row.push_back(command_cell(ci, p));
+        } else if (n == "repo") {
+          row.push_back(cell(show_owner ? p.repo : p.repo.substr(p.repo.find('/') + 1), repo_w));
+        } else if (n == "number") {
+          row.push_back(cell_right(std::to_string(p.number), num_w));
+        } else if (n == "size") {
+          Color size_color = Color::Green;
+          switch (size_band(p.additions + p.deletions, cfg.green_below, cfg.red_from)) {
+            case Band::Green: size_color = Color::Green; break;
+            case Band::Yellow: size_color = Color::Yellow; break;
+            case Band::Red: size_color = Color::Red; break;
+          }
+          row.push_back(p.partial ? cell("", 11)
                                   : hbox({cell_right("+" + compact(p.additions), 5), text(" "),
                                           cell_right("-" + compact(p.deletions), 5)}) |
-                                        color(size_color);
-      Element line = hbox({text(" "), cell(repo, repo_w), text("  "),
-                           cell_right(std::to_string(p.number), num_w), text("  "), size_el,
-                           text("  "), state_cell(derive_state(p, status_of(p.url))),
-                           cell_right(p.created ? age(static_cast<long>(t - p.created)) : "", 4),
-                           text("  "), author_cell(p.author), text(" "),
-                           tags_cell(tags_of(p.url), tags_w), text(" "),
-                           text(p.partial ? "…" : shown_title(p.title)) | flex});
+                                        color(size_color));
+        } else if (n == "state") {
+          row.push_back(state_cell(derive_state(p, status_of(p.url))));
+        } else if (n == "age") {
+          row.push_back(cell_right(p.created ? age(static_cast<long>(t - p.created)) : "", 4));
+        } else if (n == "author") {
+          row.push_back(author_cell(p.author));
+        } else if (n == "tags") {
+          row.push_back(tags_cell(tags_of(p.url), tags_w));
+        } else {
+          row.push_back(text(p.partial ? "…" : shown_title(p.title)) | flex);
+        }
+        row.push_back(text(std::string(gap(c), ' ')));
+      }
+      if (!flex_col) row.push_back(filler());
+      Element line = hbox(std::move(row));
       if (static_cast<int>(i) == selected) line = line | inverted | focus;
       lines.push_back(line);
     }
@@ -586,6 +697,9 @@ struct Ui {
       for (auto& t : it->second.tags)
         parts.push_back(text(tag + t.glyph + " " + t.text + (t.hint.empty() ? "" : " — " + t.hint)));
     }
+    for (size_t ci = 0; ci < cfg.columns.size(); ++ci)
+      if (auto it = column_cells.find({ci, p.url}); it != column_cells.end() && !it->second.error.empty())
+        parts.push_back(text("  [" + cfg.columns[ci].name + "] ✗ " + it->second.error) | color(Color::Red));
     if (has_note(p.url)) parts.push_back(text("  n read note") | color(Color::Cyan));
     return hbox(std::move(parts));
   }
@@ -946,6 +1060,11 @@ void run_ui(Config cfg) {
   Ui* u = ui.get();
 
   std::thread([u] { u->worker(); }).detach();
+  for (auto& c : u->cfg.columns)
+    if (!c.command.empty()) {
+      for (int i = 0; i < Ui::kColumnJobs; ++i) std::thread([u] { u->column_worker(); }).detach();
+      break;
+    }
   std::thread([u] {  // ticks the clock: "↻ 40s ago" and the auto refresh
     for (;;) {
       std::this_thread::sleep_for(std::chrono::seconds(1));

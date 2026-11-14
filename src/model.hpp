@@ -349,6 +349,53 @@ inline std::string str(const nlohmann::json& j, const char* key) {
   return it != j.end() && it->is_string() ? it->get<std::string>() : "";
 }
 
+// Text from a program, made safe to draw: no control characters reach the
+// terminal (C0 but newline, DEL, C1), tabs become 4 spaces, trailing
+// whitespace goes.
+inline std::string printable(const std::string& raw) {
+  std::string out;
+  for (size_t i = 0; i < raw.size(); ++i) {
+    unsigned char c = raw[i];
+    if (c == 0xC2 && i + 1 < raw.size() && (static_cast<unsigned char>(raw[i + 1]) & 0xE0) == 0x80) ++i;  // C1: U+0080-009F
+    else if (c == '\t') out += "    ";
+    else if (c == '\n' || (c >= 0x20 && c != 0x7f)) out += static_cast<char>(c);
+  }
+  while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
+  return out;
+}
+
+// A PR as a command column gets it (01-anton.md, "Command columns"): as JSON
+// on stdin, and field by field as {name} in its arguments.
+inline nlohmann::json pr_json(const Pr& p) {
+  return {{"url", p.url}, {"repo", p.repo}, {"owner", p.owner}, {"number", p.number},
+          {"title", p.title}, {"author", p.author}, {"state", p.state}, {"draft", p.draft},
+          {"review_decision", p.review_decision}, {"checks", p.checks}, {"my_review", p.my_review},
+          {"mergeable", p.mergeable}, {"additions", p.additions}, {"deletions", p.deletions},
+          {"created", p.created}, {"updated", p.updated}, {"closed", p.closed}};
+}
+
+// "{repo}#{number}" -> "o/r#12": a {name} that's a field of j becomes its
+// value (strings bare, the rest as JSON); anything else stays as written.
+inline std::string fill(const std::string& arg, const nlohmann::json& j) {
+  std::string out;
+  for (size_t i = 0; i < arg.size();) {
+    size_t close = arg[i] == '{' ? arg.find('}', i) : std::string::npos;
+    if (close != std::string::npos)
+      if (auto it = j.find(arg.substr(i + 1, close - i - 1)); it != j.end()) {
+        out += it->is_string() ? it->get<std::string>() : it->dump();
+        i = close + 1;
+        continue;
+      }
+    out += arg[i++];
+  }
+  return out;
+}
+
+// What a command column shows: the first line of its output, made printable.
+inline std::string cell_text(const std::string& out) {
+  return printable(out.substr(0, out.find('\n')));
+}
+
 // Folds one stdout line. Returns the URL it touched, "" otherwise.
 inline std::string apply_line(PluginState& st, const std::string& line) {
   auto j = nlohmann::json::parse(line, nullptr, false);
@@ -384,14 +431,7 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
         info.tags.push_back({str(t, "glyph"), str(t, "text"), str(t, "hint")});
   if (auto it = j.find("order"); it != j.end() && it->is_number()) info.order = it->get<double>();
   if (auto it = j.find("watch"); it != j.end() && it->is_boolean()) info.watch = it->get<bool>();
-  std::string raw = str(j, "note");
-  for (size_t i = 0; i < raw.size(); ++i) {  // no control characters reach the terminal
-    unsigned char c = raw[i];
-    if (c == 0xC2 && i + 1 < raw.size() && (static_cast<unsigned char>(raw[i + 1]) & 0xE0) == 0x80) ++i;  // C1: U+0080-009F
-    else if (c == '\t') info.note += "    ";
-    else if (c == '\n' || (c >= 0x20 && c != 0x7f)) info.note += static_cast<char>(c);
-  }
-  while (!info.note.empty() && std::isspace(static_cast<unsigned char>(info.note.back()))) info.note.pop_back();
+  info.note = printable(str(j, "note"));
   if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty())
     st.prs.erase(url);  // {"pr": url} alone: the plugin has nothing to say about it
   else

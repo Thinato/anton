@@ -1,6 +1,7 @@
 #pragma once
 // ~/.config/anton/config.json -> Config. Every key is optional.
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -68,6 +69,17 @@ inline std::string expand_home(std::string s) {
   return s;
 }
 
+// A table column: a built-in, or a command whose output fills the cell
+// (01-anton.md, "Columns").
+struct Column {
+  std::string name;                  // built-in name, or the command column's header
+  std::vector<std::string> command;  // non-empty: a command column
+  int width = 10;                    // command columns; built-ins size themselves
+  int timeout = 10;                  // seconds
+};
+
+inline const std::vector<std::string> kColumns = {"repo", "number", "size", "state", "age", "author", "tags", "title"};
+
 struct Config {
   int refresh_seconds = 120;
   int watch_seconds = 15;  // PRs a plugin marks "watch": true
@@ -83,6 +95,11 @@ struct Config {
       {"Assigned", "is:open assignee:@me", "", ""},
       {"Mentioned", "is:open mentions:@me", "", ""},
   };
+  std::vector<Column> columns = [] {
+    std::vector<Column> v;
+    for (auto& n : kColumns) v.push_back({n, {}});
+    return v;
+  }();
   std::vector<PluginConfig> plugins;
   std::map<std::string, Person> people;  // lowercased GitHub login -> person
 };
@@ -147,6 +164,27 @@ inline std::string parse_config(const std::string& text, Config& c) {
       if (pc.rerun != "exit" && pc.rerun != "refresh" && pc.rerun != "never")
         return "plugin \"" + pc.name + "\": rerun must be exit, refresh or never";
       c.plugins.push_back(pc);
+    }
+    if (j.contains("columns")) {
+      c.columns.clear();
+      for (auto& v : j.at("columns")) {
+        Column col;
+        if (v.is_string()) {
+          col.name = v.get<std::string>();
+          if (std::find(kColumns.begin(), kColumns.end(), col.name) == kColumns.end())
+            return "columns: no column \"" + col.name + "\" (built in: " + join(kColumns) +
+                   "; or {\"name\": ..., \"command\": [...]})";
+        } else {
+          col.name = v.at("name").get<std::string>();
+          col.command = v.at("command").get<std::vector<std::string>>();
+          for (auto& a : col.command) a = expand_home(a);
+          col.width = std::clamp(v.value("width", col.width), 1, 80);
+          col.timeout = std::clamp(v.value("timeout", col.timeout), 1, 300);
+          if (col.command.empty()) return "column \"" + col.name + "\": empty command";
+        }
+        c.columns.push_back(col);
+      }
+      if (c.columns.empty()) return "columns: needs at least one column";
     }
     if (c.plugins.size() > Plugins::kMaxPlugins)
       return "at most " + std::to_string(Plugins::kMaxPlugins) + " plugins";
