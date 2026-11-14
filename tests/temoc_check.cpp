@@ -86,6 +86,8 @@ int main() {
   assert(!has_directive("[//]: # \"import Fixtures\"\n"));
   assert(!has_directive("Write `[//]: # \"decisionTable X\"` before a table.\n"));  // prose, not a directive
   assert(!has_directive("    [//]: # \"decisionTable X\"\n"));  // indented 4: a code block
+  assert(!has_directive("```md\n[//]: # \"decisionTable X\"\n```\n"));  // an example in a fenced block
+  assert(has_directive("~~~\n```\n~~~\n[//]: # \"decisionTable X\"\n"));
 
   // The recorded run: calculator.md passes, calculator_2.md has snoozed rows
   std::ifstream rec(std::string(__FILE__).substr(0, std::string(__FILE__).rfind('/')) + "/temoc_calculator.jsonl");
@@ -169,6 +171,12 @@ int main() {
   none.nothing = "No spec files changed.";
   j = json::parse(pr_line(PR, {false, none}));
   assert(j["tags"][0]["text"] == "no specs" && j["note"] == "No spec files changed.");
+
+  // A huge run_error message still fits the line: the hint is cut
+  Outcome huge = fold_all("{\"type\":\"run_error\",\"kind\":\"protocol_error\",\"message\":\"" +
+                          std::string(70000, 'x') + "\"}\n");
+  std::string hl = pr_line(PR, {false, huge});
+  assert(hl.size() <= kMaxLine && json::parse(hl)["tags"][0]["hint"].get<std::string>().size() < 400);
 
   // Odd events don't throw
   Outcome odd = fold_all("{\"type\":\"row_finished\",\"line\":\"x\",\"checks\":[1,{\"status\":\"failed\",\"actual\":3}]}\n"

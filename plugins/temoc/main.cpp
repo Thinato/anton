@@ -43,6 +43,16 @@ static std::optional<std::string> read_file(const std::string& p) {
   return f ? std::optional(ss.str()) : std::nullopt;
 }
 
+// A changed file of the PR, if it is a regular file of at most 4 MB: the PR
+// could add a link to /dev/zero or a FIFO, which would never finish reading.
+static std::optional<std::string> read_spec(const std::string& p) {
+  std::error_code ec;
+  auto st = std::filesystem::symlink_status(p, ec);
+  if (ec || st.type() != std::filesystem::file_type::regular || std::filesystem::file_size(p, ec) > (4 << 20) || ec)
+    return std::nullopt;
+  return read_file(p);
+}
+
 // Checks out the PR, picks its changed spec files and runs temoc on them.
 static void execute(const std::string& url, Outcome& o) {
   auto fail = [&](const std::string& why) { o.error = why; };
@@ -68,12 +78,13 @@ static void execute(const std::string& url, Outcome& o) {
 
   // The changed .md files that hold a test, as they are in the checkout
   // (a removed file isn't there).
-  Result f = run({"gh", "api", "--paginate", "repos/" + repo + "/pulls/" + number + "/files", "--jq", ".[].filename"});
+  Result f = run({"gh", "api", "--paginate", "repos/" + repo + "/pulls/" + number + "/files", "--jq", ".[].filename"}, "",
+                 true, 120);
   if (f.code != 0) return fail("gh api repos/" + repo + "/pulls/" + number + "/files: " + first_line(f));
   std::istringstream names(f.out);
   for (std::string name; std::getline(names, name);)
     if (is_markdown(name))
-      if (auto text = read_file(cwd + "/" + name); text && has_directive(*text)) o.files.push_back(name);
+      if (auto text = read_spec(cwd + "/" + name); text && has_directive(*text)) o.files.push_back(name);
   if (o.files.empty()) {
     o.nothing = "No spec files changed: none of this PR's changed `.md` files has a `decisionTable` directive.";
     return;
@@ -84,7 +95,7 @@ static void execute(const std::string& url, Outcome& o) {
   if (!std::filesystem::is_regular_file(config, ec))
     return fail("temoc config " + r.config + " is not in " + (r.checkout == "pr" ? "the PR's checkout" : r.dir));
 
-  std::vector<std::string> argv = {"temoc", "-c", config, "--output", "jsonl"};
+  std::vector<std::string> argv = {"temoc", "-c", config, "--output", "jsonl", "--"};
   argv.insert(argv.end(), o.files.begin(), o.files.end());
   Watched w = watch(
       argv, r.env, "", cwd, cfg.timeout, [&](const std::string& l) { fold(o, json::parse(l, nullptr, false)); },

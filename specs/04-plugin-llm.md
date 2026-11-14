@@ -113,7 +113,8 @@ version of the code is there:
   After the run: `git worktree remove --force` and `git worktree prune`. No
   branch or ref is created, and your working copy and its current branch
   aren't touched. A failed fetch (no `origin`, offline, no such PR) fails the
-  run: `git fetch origin pull/12/head in ~/src/core: fatal: …`.
+  run: `git fetch origin pull/12/head in ~/src/core: fatal: …`, and so does
+  one that takes over 120s (`…: timed out`), since it holds the lock below.
 - **`"as-is"`**: the clone itself, on whatever you have checked out.
 
 `"pr"` is the default because a reviewer should read the code under review,

@@ -50,6 +50,7 @@ inline std::string tail(const std::string& s, size_t n) {
 
 inline std::string first_line(const Result& res) {
   std::string e = trim_ws(res.err);
+  if (res.timed_out) return "timed out";
   return e.empty() ? "exit " + std::to_string(res.code) : e.substr(0, e.find('\n'));
 }
 
@@ -87,7 +88,7 @@ inline std::string make_tmp(Scratch& sc, const std::string& prefix) {
 inline std::string add_worktree(Scratch& sc, const std::string& clone, const std::string& number) {
   std::lock_guard lk(git_mu);
   std::string ref = "pull/" + number + "/head";
-  Result f = run({"git", "-C", clone, "fetch", "origin", ref});
+  Result f = run({"git", "-C", clone, "fetch", "origin", ref}, "", true, 120);  // a hung fetch holds git_mu
   if (f.code != 0) return "git fetch origin " + ref + " in " + clone + ": " + first_line(f);
   sc.clone = clone, sc.tree = sc.tmp + "/pr";
   // No hooks: a core.hooksPath inside the repo would be the PR's own post-checkout.

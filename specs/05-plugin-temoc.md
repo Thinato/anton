@@ -61,14 +61,17 @@ anton-temoc:
    saying how to add it.
 2. Checks out the PR's head (`checkout: "pr"`): `git fetch origin
    pull/<n>/head` and a detached `git worktree add` with hooks off, removed
-   with its temp directory when the run ends.
+   with its temp directory when the run ends. A fetch that takes over 120s
+   fails the run.
 3. Lists the PR's changed files (`gh api --paginate
-   repos/<repo>/pulls/<n>/files`) and keeps the `.md` ones that, in the
-   checkout, have a `decisionTable` directive: a line `[//]: # "decisionTable
-   …"` (or `(…)`, `'…'`), indented at most three spaces. A removed file isn't
+   repos/<repo>/pulls/<n>/files`, 120s at most) and keeps the `.md` ones
+   that, in the checkout, are regular files of at most 4 MB (not links: a PR
+   could link `x.md` to `/dev/zero`) and have a `decisionTable` directive: a
+   line `[//]: # "decisionTable …"` (or `(…)`, `'…'`), indented at most three
+   spaces, outside ```` ``` ```` and `~~~` fenced blocks. A removed file isn't
    in the checkout, so it drops out. None left: tag `🧪 no specs`, a note
    saying so, and temoc doesn't run.
-4. Runs `temoc -c <config> --output jsonl <files…>` in the checkout, with
+4. Runs `temoc -c <config> --output jsonl -- <files…>` in the checkout, with
    `env` added, and folds its events as they come.
 
 **Timeout**: SIGTERM to temoc's process group, SIGKILL 5s later. temoc
@@ -78,7 +81,11 @@ own), reports the remaining rows as `skipped`, and ends with `run_finished`
 
 **One at a time per PR.** Pressing the key again while it runs prints
 `anton-temoc: temoc is already running on this PR` on stderr, which anton
-flashes. Different PRs run at once, up to 64.
+flashes. Different PRs run at once, up to 64, each with its own fixture
+server. Two PRs of one repo whose temoc config fixes a TCP port collide: the
+second fails with `server_start_failed`; run them one after the other (port
+`1`, temoc's stdin/stdout transport, has no such problem). With `checkout:
+"as-is"` they also share the clone.
 
 ## Results
 

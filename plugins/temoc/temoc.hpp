@@ -3,6 +3,7 @@
 // specs, temoc's JSONL events -> counts, note and marks, and the PR's plugin
 // line. No I/O, so tests/temoc_check.cpp drives it.
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <regex>
@@ -79,11 +80,20 @@ inline bool is_markdown(const std::string& path) { return lower(path).ends_with(
 
 // True when markdown text holds a temoc test: a `[//]: # "decisionTable …"`
 // line (or `(…)`, `'…'`), as temoc's parser reads it.
+// Not inside a ``` or ~~~ fenced block, where temoc sees no directive.
 inline bool has_directive(const std::string& text) {
   static const std::regex re(R"(^ {0,3}\[//\]:[ \t]*#[ \t]+["'(]decisionTable )");
   std::istringstream in(text);
-  for (std::string l; std::getline(in, l);)
-    if (std::regex_search(l, re)) return true;
+  std::string fence;  // the open fence's marker
+  for (std::string l; std::getline(in, l);) {
+    size_t i = l.find_first_not_of(' ');
+    if (i <= 3 && (l.compare(i, 3, "```") == 0 || l.compare(i, 3, "~~~") == 0)) {
+      if (fence.empty()) fence = l.substr(i, 3);
+      else if (fence == l.substr(i, 3)) fence.clear();
+    } else if (fence.empty() && std::regex_search(l, re)) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -298,7 +308,15 @@ inline std::string pr_line(const std::string& url, const PrState& st) {
   std::string why = o ? failure(*o) : "";
   if (st.running) t["text"] = "temoc…", t["hint"] = "temoc: running";
   else if (!o->nothing.empty()) t["text"] = "no specs", t["hint"] = "temoc: no spec files changed";
-  else if (!why.empty()) t["text"] = "failed", t["hint"] = "temoc: " + why.substr(0, why.find('\n'));
+  else if (!why.empty()) {
+    std::string h = why.substr(0, why.find('\n'));
+    if (h.size() > 300) {  // the hint isn't cut to fit the line below: keep it short
+      size_t n = 300;
+      while (n > 0 && (static_cast<unsigned char>(h[n]) & 0xC0) == 0x80) --n;
+      h = h.substr(0, n) + "…";
+    }
+    t["text"] = "failed", t["hint"] = "temoc: " + h;
+  }
   else t["text"] = tally(o->counts), t["hint"] = "temoc at " + short_sha(o->ref) + ": " + counts_text(o->counts);
   j["tags"] = json::array({t});
   auto dump = [&] { return j.dump(-1, ' ', false, json::error_handler_t::replace); };
