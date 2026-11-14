@@ -74,7 +74,7 @@ shown in the `?` overlay for debugging.
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
 | `note` | optional longer text, e.g. an LLM's review of the PR. `n` opens it in a scrollable overlay; the detail line says `n read note` when there is one. It's rendered as markdown, the same way as a PR's description in the reader (`01-anton.md`). Like everything else it must fit the 64 KiB line. |
-| `marks` | optional notes on lines of files in the PR's head, below. anton doesn't show them yet. |
+| `marks` | optional notes on lines of files in the PR's head, below. The reader shows them on the file's tab. |
 
 `marks` lets any plugin annotate lines of the PR's files: a test result on
 the row of a spec table, a linter's finding on a line of code.
@@ -93,6 +93,19 @@ the row of a spec table, a linter's finding on a line of code.
 | `line` | 1-based line of `file` at `ref`; `0` is the file as a whole. A line can have several marks. |
 | `level` | `ok`, `error`, `warn` or `dim` (didn't run, not relevant): how to color it. Anything else reads as `dim`. |
 | `glyph`, `text` | what to show next to the line; both may be empty. |
+
+A mark without a `file`, or whose `line` isn't a whole number from 0 up,
+is skipped; the rest of the line still counts.
+
+The reader (`01-anton.md`) shows a markdown file's marks on its tab, from
+every plugin: the glyph in a gutter left of the line, colored by level (the
+worst level when a line has several), an `error` or `warn` mark's text
+under the line (under the table for a table row), a directive line's after
+temoc's badge, line 0's at the top. `ok` and `dim` marks on rows are only
+their glyph. A mark on a line that shows nothing (a blank line, the middle
+of a paragraph) goes on the nearest shown line above it. When `ref` isn't
+the head the tab shows, the tab says the results are for that commit. The
+tab's name counts the marks on rows by glyph: `✓ 10 ✗ 1 💤 1`.
 
 **State, not deltas.** Every `pr` line is the *complete* truth for
 (plugin, PR) and replaces the previous one; an omitted field means "none"
@@ -169,6 +182,7 @@ re-sends the PR's `pr` line. anton never updates plugin state on its own.
   `glyph text`, joined by space; overflow becomes `+N` → `👀 alice +1`.
 - **Detail line** under the selected row: every tag and status as
   `[plugin] glyph text — hint`, then `n read note` if a plugin attached one.
+- **Reader** (`⏎`): marks on the tab of their file, above.
 - **Note overlay** (`n`): every plugin's note on the selected PR, headed
   `[plugin]` when there's more than one. `j`/`k`, `space`/PgUp/PgDn, `g`/`G`
   scroll; `y` copies the text; `esc`, `q` or `n` closes.

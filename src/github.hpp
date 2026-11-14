@@ -28,8 +28,17 @@ Fetch fetch_prs(const std::vector<std::string>& urls);
 // Returned as partial Prs.
 Fetch fetch_states(const std::vector<std::string>& urls);
 
-// A PR's description (markdown, "" if it has none), via `gh pr view`. On
-// failure returns "" and sets error to gh's first stderr line.
-std::string fetch_body(const std::string& url, std::string& error);
+// A PR's description (markdown, "" if it has none) and its head commit, via
+// `gh pr view`. On failure returns "" and sets error to gh's first stderr
+// line.
+std::string fetch_body(const std::string& url, std::string& head, std::string& error);
+
+// The .md/.markdown files a PR adds or changes (a removed one isn't at its
+// head), with their text at commit `head`, in the PR's order. Each file has
+// its own error; a failure to list them sets `error`.
+struct File {
+  std::string path, text, error;
+};
+std::vector<File> fetch_md_files(const std::string& url, const std::string& head, std::string& error);
 
 }  // namespace anton

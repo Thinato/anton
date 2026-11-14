@@ -34,6 +34,16 @@ enum class Mode { Normal, Query, Picker, Help, Note, Reader };
 
 std::time_t now() { return std::time(nullptr); }
 
+// "2026-11-14", in UTC: temoc's snoozes count days in UTC.
+std::string today() {
+  std::time_t t = now();
+  std::tm tm{};
+  gmtime_r(&t, &tm);
+  char b[16];
+  std::strftime(b, sizeof b, "%Y-%m-%d", &tm);
+  return b;
+}
+
 // Case-insensitive subsequence match: "bcore" finds "brick-so/core".
 bool fuzzy(const std::string& hay, const std::string& needle) {
   size_t i = 0;
@@ -76,16 +86,31 @@ struct Ui {
   std::string note_url;  // the PR whose notes the Note overlay shows
   int note_scroll = 0;   // first line shown
   std::string reader_url;  // the PR whose description the Reader shows
-  int reader_scroll = 0;
+  size_t reader_tab = 0;   // 0: the description, then the PR's files in tab order
+  std::map<std::string, int> reader_scroll;  // per tab: by path, "" for the description
 
-  // A PR's description, fetched when the reader opens it and again when the
-  // PR's updatedAt moves. UI thread.
+  // A PR's description and head commit, fetched when the reader opens it and
+  // again when the PR's updatedAt moves. UI thread.
   struct Body {
-    std::string text, error;
+    std::string text, head, error;
     std::time_t updated = -1;  // the updatedAt it was fetched for
     bool loading = false;
   };
   std::map<std::string, Body> bodies;  // by URL
+
+  // The PR's markdown files at its head, the reader's other tabs: fetched
+  // once per (URL, head) when the reader shows the PR. Specs come first.
+  struct FileTab {
+    std::string path, name, text, error;
+    std::vector<md::Directive> dirs;
+    bool spec = false;  // has a decisionTable directive
+  };
+  struct Files {
+    std::vector<FileTab> tabs;
+    std::string error;
+    bool loading = false;
+  };
+  std::map<std::pair<std::string, std::string>, Files> files;
 
   // Markdown rendered for one width; redone when the text or width changes.
   struct Rendered {
@@ -772,20 +797,26 @@ struct Ui {
            size(WIDTH, GREATER_THAN, 40) | clear_under | center;
   }
 
+  static Element md_span(const std::string& s, unsigned style) {
+    Element e = text(s);
+    if (style & md::Bold) e = e | bold;
+    if (style & md::Italic) e = e | italic;
+    if (style & md::Strike) e = e | strikethrough;
+    if (style & md::Link) e = e | underlined;
+    if (style & md::Code) e = e | color(Color::Yellow);
+    if (style & md::Output) e = e | color(Color::Cyan);
+    if (style & md::Ok) e = e | color(Color::Green);
+    if (style & md::Error) e = e | color(Color::Red);
+    if (style & md::Warn) e = e | color(Color::Yellow);
+    if (style & md::Dim) e = e | dim;
+    return e;
+  }
+
   // A rendered markdown line as one row. Wrapped by md::render rather than
   // by paragraph(), so every element is one row and scrolling reaches the end.
   static Element md_line(const md::Line& l) {
     Elements parts;
-    for (auto& sp : l.spans) {
-      Element e = text(sp.text);
-      if (sp.style & md::Bold) e = e | bold;
-      if (sp.style & md::Italic) e = e | italic;
-      if (sp.style & md::Strike) e = e | strikethrough;
-      if (sp.style & md::Link) e = e | underlined;
-      if (sp.style & md::Code) e = e | color(Color::Yellow);
-      if (sp.style & md::Dim) e = e | dim;
-      parts.push_back(e);
-    }
+    for (auto& sp : l.spans) parts.push_back(md_span(sp.text, sp.style));
     Element e = parts.empty() ? text("") : hbox(std::move(parts));
     if (l.heading == 1) return e | color(Color::Cyan) | inverted;
     if (l.heading == 2) return e | color(Color::Cyan);
@@ -831,7 +862,7 @@ struct Ui {
       for (auto& [name, body] : notes) {
         if (!note_md.lines.empty()) note_md.lines.emplace_back();
         if (notes.size() > 1) note_md.lines.push_back({{{"[" + name + "]", md::Bold}}, 0, 2});
-        for (auto& l : md::render(body, tw)) note_md.lines.push_back(std::move(l));
+        for (auto& l : md::render(body, tw, today())) note_md.lines.push_back(std::move(l));
       }
     }
     std::string where;
@@ -855,28 +886,128 @@ struct Ui {
     if (b.loading || b.updated == updated) return;
     b.loading = true;
     std::thread([this, url, updated] {
-      std::string err, body = fetch_body(url, err);
-      post([this, url, updated, err, body] {
+      std::string err, head, body = fetch_body(url, head, err);
+      post([this, url, updated, err, head, body] {
         Body& b = bodies[url];
         b.loading = false;
         b.updated = updated;  // a failure too, or it'd retry every frame; reopening retries
         b.error = err;
-        if (err.empty()) b.text = body;
+        if (err.empty()) {
+          b.text = body;
+          b.head = head;
+        }
       });
     }).detach();
   }
 
-  void open_reader(const Pr& p) {
-    reader_url = p.url;
-    reader_scroll = 0;
-    mode = Mode::Reader;
-    if (!bodies[p.url].error.empty()) bodies[p.url].updated = -1;
+  // The PR's file tabs at the head its description came with, fetched off
+  // the UI thread on first ask. nullptr until the head is known.
+  Files* want_files(const std::string& url) {
+    std::string head = bodies[url].head;
+    if (head.empty()) return nullptr;
+    auto key = std::make_pair(url, head);
+    auto [it, fresh] = files.try_emplace(key);
+    if (!fresh) return &it->second;
+    it->second.loading = true;
+    std::thread([this, key] {
+      std::string err;
+      std::vector<FileTab> tabs;
+      for (auto& f : fetch_md_files(key.first, key.second, err)) {
+        FileTab t{f.path, "", f.text, f.error, md::directives(f.text)};
+        t.spec = std::any_of(t.dirs.begin(), t.dirs.end(), [](const md::Directive& d) { return !d.import; });
+        tabs.push_back(std::move(t));
+      }
+      std::stable_partition(tabs.begin(), tabs.end(), [](const FileTab& t) { return t.spec; });
+      std::vector<std::string> paths;
+      for (auto& t : tabs) paths.push_back(t.path);
+      auto names = short_names(paths);
+      for (size_t i = 0; i < tabs.size(); ++i) tabs[i].name = names[i];
+      post([this, key, tabs, err] { files[key] = Files{tabs, err, false}; });
+    }).detach();
+    return &it->second;
   }
 
-  static int reader_rows() { return std::max(1, Terminal::Size().dimy - 5); }  // header 3, footer 2
+  const Files* reader_files() const {
+    auto b = bodies.find(reader_url);
+    if (b == bodies.end()) return nullptr;
+    auto f = files.find({reader_url, b->second.head});
+    return f == files.end() ? nullptr : &f->second;
+  }
 
-  // Full screen: the PR's title and where it lives, then its description as
-  // rendered markdown.
+  // Every plugin's marks on one file of a PR, and, in stale, a line for each
+  // plugin whose marks are about another commit than head.
+  std::vector<Mark> marks_on(const std::string& url, const std::string& path, const std::string& head,
+                             std::vector<std::string>* stale = nullptr) const {
+    std::vector<Mark> out;
+    for (size_t i = 0; i < live.size(); ++i) {
+      auto it = live[i].prs.find(url);
+      if (it == live[i].prs.end()) continue;
+      size_t before = out.size();
+      for (auto& m : it->second.marks)
+        if (m.file == path) out.push_back(m);
+      const std::string& ref = it->second.marks_ref;
+      if (stale && out.size() > before && !ref.empty() && !head.starts_with(ref))  // a short sha is fine
+        stale->push_back(cfg.plugins[i].name + ": results are for " + ref.substr(0, 7) + "; the PR has moved on");
+    }
+    return out;
+  }
+
+  void open_reader(const Pr& p) {
+    reader_url = p.url;
+    reader_tab = 0;
+    reader_scroll.clear();
+    mode = Mode::Reader;
+    Body& b = bodies[p.url];
+    if (!b.error.empty()) b.updated = -1;
+    if (auto f = files.find({p.url, b.head}); f != files.end() && !f->second.loading && !f->second.error.empty())
+      files.erase(f);  // reopening retries
+  }
+
+  static int reader_rows() { return std::max(1, Terminal::Size().dimy - 6); }  // header 4, footer 2
+
+  // Description, then a tab per file: `🧪 name ✓ 12 ✗ 2`. Tabs that don't fit
+  // drop off the right, and off the left when the active one would.
+  Element render_reader_tabs(const Files* fs, const std::string& head, int width) {
+    std::vector<std::vector<md::Span>> tabs = {{{" Description ", 0}}};
+    static const std::vector<FileTab> none;
+    for (auto& t : fs ? fs->tabs : none) {
+      std::vector<md::Span> p = {{" " + std::string(t.spec ? "🧪 " : "") + t.name, 0}};
+      for (auto& c : md::tally(marks_on(reader_url, t.path, head), t.dirs))
+        p.push_back({" " + c.glyph + " " + std::to_string(c.n), c.style});
+      p.push_back({" ", 0});
+      tabs.push_back(std::move(p));
+    }
+    std::vector<int> widths;
+    for (auto& t : tabs) {
+      int n = 1;  // the │ after it
+      for (auto& s : t) n += string_width(s.text);
+      widths.push_back(n);
+    }
+    width -= 4;  // room for ‹ and ›
+    size_t start = 0;
+    int total = 0;
+    for (size_t i = 0; i <= reader_tab && i < tabs.size(); ++i) total += widths[i];
+    while (start < reader_tab && total > width) total -= widths[start++];
+    Elements row;
+    if (start > 0) row.push_back(text("‹") | dim);
+    for (size_t i = start, used = 0; i < tabs.size(); used += static_cast<size_t>(widths[i++])) {
+      if (i > reader_tab && static_cast<int>(used) + widths[i] > width) {
+        row.push_back(text("›") | dim);
+        break;
+      }
+      Elements parts;
+      for (auto& s : tabs[i]) parts.push_back(md_span(s.text, s.style | (i == reader_tab || s.style ? 0 : md::Dim)));
+      row.push_back(i == reader_tab ? hbox(std::move(parts)) | bold | inverted : hbox(std::move(parts)));
+      row.push_back(text("│") | dim);
+    }
+    if (fs && fs->loading) row.push_back(text(" loading files…") | dim);
+    if (fs && !fs->error.empty()) row.push_back(text(" files: " + fs->error) | color(Color::Red));
+    return hbox(std::move(row));
+  }
+
+  // Full screen: the PR's title and where it lives (a file's path on its
+  // tab), the tabs, then the description or file as rendered markdown, a
+  // file with every plugin's marks.
   Element render_reader() {
     auto term = Terminal::Size();
     int w = std::max(10, std::min(120, term.dimx - 4));
@@ -890,27 +1021,60 @@ struct Ui {
                    (who && !who->name.empty() ? who->name : p.author) + "  " + p.url;
     }
     const Body& b = bodies[reader_url];
-    if (reader_md.key != b.text || reader_md.width != w) reader_md = {b.text, w, md::render(b.text, w)};
-    std::string where, msg = b.text.empty() ? "" : b.error;  // a failed refetch keeps the old text
+    const Files* fs = want_files(reader_url);
+    size_t ntabs = 1 + (fs ? fs->tabs.size() : 0);
+    reader_tab = std::min(reader_tab, ntabs - 1);
+    const FileTab* ft = reader_tab ? &fs->tabs[reader_tab - 1] : nullptr;
+    std::string day = today(), where, msg = b.text.empty() ? "" : b.error;  // a failed refetch keeps the old text
+    int& scroll = reader_scroll[ft ? ft->path : ""];
     Elements rows;
-    if (b.text.empty() && b.loading) rows.push_back(text("loading…") | dim);
-    else if (b.text.empty() && !b.error.empty())
-      rows.push_back(text("couldn't load the description: " + b.error) | color(Color::Red));
-    else if (reader_md.lines.empty()) rows.push_back(text("No description.") | dim);
-    else rows = page(reader_md.lines, reader_rows(), reader_scroll, where);
+    if (!ft) {
+      std::string key = '\0' + day + '\0' + b.text;
+      if (reader_md.key != key || reader_md.width != w) reader_md = {key, w, md::render(b.text, w, day)};
+      if (b.text.empty() && b.loading) rows.push_back(text("loading…") | dim);
+      else if (b.text.empty() && !b.error.empty())
+        rows.push_back(text("couldn't load the description: " + b.error) | color(Color::Red));
+      else if (reader_md.lines.empty()) rows.push_back(text("No description.") | dim);
+      else rows = page(reader_md.lines, reader_rows(), scroll, where);
+    } else {
+      where_from = ft->path + "  at " + b.head.substr(0, 7);
+      std::vector<std::string> stale;
+      auto marks = marks_on(reader_url, ft->path, b.head, &stale);
+      std::string key = ft->path + '\0' + day + '\0' + ft->text;
+      for (auto& m : marks) key += '\0' + std::to_string(m.line) + m.level + '\0' + m.glyph + '\0' + m.text;
+      for (auto& s : stale) key += '\0' + s;
+      if (reader_md.key != key || reader_md.width != w) {
+        std::vector<md::Line> lines;
+        for (auto& s : stale)
+          for (auto& l : md::render(s, w)) {
+            for (auto& sp : l.spans) sp.style |= md::Warn;
+            lines.push_back(std::move(l));
+          }
+        if (!stale.empty()) lines.emplace_back();
+        auto doc = md::render(ft->text, marks.empty() ? w : w - md::kGutter, day);
+        if (!marks.empty()) doc = md::annotate(doc, marks, w);
+        lines.insert(lines.end(), doc.begin(), doc.end());
+        reader_md = {key, w, std::move(lines)};
+      }
+      if (!ft->error.empty()) rows.push_back(text("couldn't load " + ft->path + ": " + ft->error) | color(Color::Red));
+      else if (reader_md.lines.empty()) rows.push_back(text("Empty file.") | dim);
+      else rows = page(reader_md.lines, reader_rows(), scroll, where);
+    }
     Element message = now() < notice_until && !notice.empty() ? text(" " + notice) | color(Color::Cyan)
                       : !msg.empty()                          ? text(" " + msg) | color(Color::Red)
                                                               : text("");
-    return vbox({text(" " + title) | bold, text(" " + where_from) | dim, separator(),
-                 hbox({text("  "), vbox(std::move(rows))}) | flex, message,
-                 text(" " + where + "j/k space g/G scroll  w web  y copy URL  q close") | dim});
+    return vbox({text(" " + title) | bold, text(" " + where_from) | dim, render_reader_tabs(fs, b.head, term.dimx),
+                 separator(), hbox({text("  "), vbox(std::move(rows))}) | flex, message,
+                 text(" " + where + (ntabs > 1 ? "Tab [ ] files  " : "") +
+                      "j/k space g/G scroll  w web  y copy URL  q close") |
+                     dim});
   }
 
   Element render_help() {
     Elements l = {
         text("keys") | bold,
         text("  j/k ↑/↓ g/G   move            ⏎  read description  w  open in browser"),
-        text("  y             copy URL"),
+        text("  y             copy URL        reading: Tab/[ ] the PR's .md files, 🧪 temoc specs first"),
         text("  r             refresh         /  edit query        s  cycle sort"),
         text("  o / p         pick org / repo x  clear org/repo    1-9 Tab  views"),
         text("  n             read a plugin's note on the PR (an LLM review, say)"),
@@ -1023,8 +1187,14 @@ struct Ui {
       return true;
     }
     if (mode == Mode::Reader) {
+      const Files* fs = reader_files();
+      size_t n = 1 + (fs ? fs->tabs.size() : 0);
+      reader_tab = std::min(reader_tab, n - 1);
+      std::string path = reader_tab ? fs->tabs[reader_tab - 1].path : "";
       if (e == Event::Escape || e == Event::Character('q')) mode = Mode::Normal;
-      else if (scroll_key(e, reader_scroll, reader_rows())) {}
+      else if (e == Event::Tab || e == Event::Character(']')) reader_tab = (reader_tab + 1) % n;
+      else if (e == Event::TabReverse || e == Event::Character('[')) reader_tab = (reader_tab + n - 1) % n;
+      else if (scroll_key(e, reader_scroll[path], reader_rows())) {}
       else if (e == Event::Character('w') || e == Event::Return) open(reader_url);
       else if (e == Event::Character('y')) copy(reader_url);
       return true;

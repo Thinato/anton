@@ -20,6 +20,7 @@
     { "name": "Mentioned", "query": "is:open mentions:@me" }
   ],
   "plugins": [
-    { "name": "slack", "command": ["python3", "@DIR@/demo.py", "plugin"], "rerun": "exit" }
+    { "name": "slack", "command": ["python3", "@DIR@/demo.py", "plugin"], "rerun": "exit" },
+    { "name": "temoc", "command": ["python3", "@DIR@/demo.py", "temoc"], "rerun": "never" }
   ]
 }

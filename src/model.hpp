@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <ctime>
 #include <map>
 #include <optional>
@@ -321,6 +322,14 @@ inline bool local_match(const Pr& pr, const std::vector<Pred>& preds, const std:
 
 // -- plugin protocol ---------------------------------------------------------
 
+// A plugin's note on one line of a file in the PR (02-plugins.md, "marks").
+struct Mark {
+  std::string file;
+  int line = 0;       // 1-based; 0 is the file as a whole
+  std::string level;  // ok | error | warn | dim
+  std::string glyph, text;
+};
+
 struct PrInfo {
   std::set<std::string> lists;
   std::optional<Status> status;
@@ -328,6 +337,8 @@ struct PrInfo {
   std::optional<double> order;  // list views' default sort: higher first
   bool watch = false;            // re-fetch every watch_seconds (e.g. you're reviewing it)
   std::string note;              // longer text `n` opens, e.g. an LLM's review
+  std::string marks_ref;         // the commit the marks are about
+  std::vector<Mark> marks;
 };
 
 // A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
@@ -432,11 +443,57 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
   if (auto it = j.find("order"); it != j.end() && it->is_number()) info.order = it->get<double>();
   if (auto it = j.find("watch"); it != j.end() && it->is_boolean()) info.watch = it->get<bool>();
   info.note = printable(str(j, "note"));
-  if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty())
+  if (auto it = j.find("marks"); it != j.end() && it->is_object()) {
+    auto one_line = [](std::string s) {  // a mark is drawn on one row
+      s = printable(s);
+      std::replace(s.begin(), s.end(), '\n', ' ');
+      return s;
+    };
+    info.marks_ref = one_line(str(*it, "ref"));
+    if (auto ls = it->find("lines"); ls != it->end() && ls->is_array())
+      for (auto& m : *ls) {
+        if (!m.is_object() || str(m, "file").empty()) continue;
+        auto l = m.find("line");
+        if (l == m.end() || !l->is_number_integer() || l->get<long long>() < 0 || l->get<long long>() > INT_MAX)
+          continue;
+        std::string level = str(m, "level");
+        if (level != "ok" && level != "error" && level != "warn") level = "dim";
+        info.marks.push_back({str(m, "file"), static_cast<int>(l->get<long long>()), level,
+                              one_line(str(m, "glyph")), one_line(str(m, "text"))});
+      }
+  }
+  if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty() &&
+      info.marks.empty())
     st.prs.erase(url);  // {"pr": url} alone: the plugin has nothing to say about it
   else
     st.prs[url] = std::move(info);
   return url;
+}
+
+// The reader's tab names for a PR's files: the basename, with as many parent
+// directories as it takes to tell apart two that share it.
+inline std::string path_tail(const std::string& path, int parts) {
+  size_t at = path.size();
+  for (int i = 0; i < parts; ++i)
+    if (at == 0 || (at = path.rfind('/', at - 1)) == std::string::npos) return path;
+  return path.substr(at + 1);
+}
+
+inline std::vector<std::string> short_names(const std::vector<std::string>& paths) {
+  std::vector<int> parts(paths.size(), 1);
+  for (bool grew = true; grew;) {
+    grew = false;
+    std::map<std::string, int> seen;
+    for (size_t i = 0; i < paths.size(); ++i) ++seen[path_tail(paths[i], parts[i])];
+    for (size_t i = 0; i < paths.size(); ++i)
+      if (std::string t = path_tail(paths[i], parts[i]); seen[t] > 1 && t != paths[i]) {
+        ++parts[i];
+        grew = true;
+      }
+  }
+  std::vector<std::string> out;
+  for (size_t i = 0; i < paths.size(); ++i) out.push_back(path_tail(paths[i], parts[i]));
+  return out;
 }
 
 // -- sorting -----------------------------------------------------------------

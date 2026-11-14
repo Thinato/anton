@@ -8,9 +8,9 @@ anton lists the GitHub PRs that concern you: what you opened, what you were
 asked to review, what your team posted in `#code-review`. Each row shows the
 size of the change, where it stands (approved, conflicting, failing checks,
 queued for deploy, merged), how long it's been open, and who is reviewing it.
-`⏎` reads its description, rendered the way
-[glow](https://github.com/charmbracelet/glow) does, and `w` opens it in the
-browser. anton doesn't show diffs and doesn't write to GitHub.
+`⏎` reads its description and the markdown files it changes, rendered the
+way [glow](https://github.com/charmbracelet/glow) does, and `w` opens it in
+the browser. anton doesn't show diffs and doesn't write to GitHub.
 
 Named after the critic in *Ratatouille*.
 
@@ -50,7 +50,7 @@ takes works here.
 | key | |
 | --- | --- |
 | `j` `k` `g` `G` | move |
-| `⏎` | read the description (`j` `k` `space` `g` `G` scroll, `q` back) |
+| `⏎` | read the description (`j` `k` `space` `g` `G` scroll, `Tab` `[` `]` the PR's `.md` files, `q` back) |
 | `w` / `y` | open in browser / copy URL |
 | `/` | edit the query: `is:open review-requested:@me label:bug` |
 | `o` `p` `x` | scope to an org / a repo / clear it |
@@ -269,6 +269,29 @@ runs `temoc --output jsonl` on the changed `.md` files that have a
 `🧪 2 ✗ 12 ✓` (`💤 4` for snoozed rows). `n` lists each failing row as
 `file:line` with what was expected and what came back.
 
+`⏎` then `Tab` opens the spec itself, with each row marked:
+
+```
+ Description │ 🧪 calculator.md ✓ 10 ✗ 1 💤 1 │
+──────────────────────────────────────────────────────────
+  ✗  1 failed, 10 passed, 1 snoozed
+
+     import Calculator.Fixtures
+  ✗  🧪 CalculatorFixture · 1 failed, 3 passed
+     ┌────┬─────┬──────┐
+     │ a  │ b   │ sum? │
+     ├────┼─────┼──────┤
+  ✓  │ 1  │ 2   │ 3    │
+  ✗  │ 2  │ 2   │ 5    │
+  ✓  │ 10 │ 5   │ 15   │
+     └────┴─────┴──────┘
+     ✗ line 13 · sum: expected 5, got 4
+```
+
+Any `.md` the PR changes gets a tab, specs first. temoc's hidden
+directives show as `🧪 Fixture` badges (with `· snoozed until …`), and a
+test's expected-value columns (`sum?`) stand out from its inputs.
+
 This runs the PR's code on your machine, like running its tests yourself:
 the fixtures and, with a `config` inside the repo, the server command the PR
 names. It only runs when you press the key. Details in
@@ -292,5 +315,6 @@ and they must pass to merge. Every merged PR publishes the next release,
 `v<major.minor>.N-beta`, with macOS and Linux binaries; bump `VERSION` in
 `CMakeLists.txt` to start a new major.minor.
 
-`docs/demo/run.sh` runs anton on made-up PRs with a fake `gh` and a fake Slack
-plugin. The screenshot comes from it.
+`docs/demo/run.sh` runs anton on made-up PRs with a fake `gh`, a fake Slack
+plugin and a fake temoc run (`⏎` then `Tab` on the top PR of Code review).
+The screenshot comes from it.

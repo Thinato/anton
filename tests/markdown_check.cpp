@@ -136,12 +136,141 @@ int main() {
   // a table with CJK cells lines up by cells, not bytes
   assert(joined("| 名前 | x |\n|---|---|\n| 太郎 | y |", 40) ==
          "┌──────┬───┐\n│ 名前 │ x │\n├──────┼───┤\n│ 太郎 │ y │\n└──────┴───┘\n");
-  // temoc's hidden directive above a table renders nothing; the rows keep
-  // their source lines
+  // temoc directives: the forms temoc reads, outside fences, as written
   {
-    auto out = md::render("[//]: # \"decisionTable Calc\"\n\n| a | b |\n|---|---|\n| 1 | 2 |", 40);
-    assert(out.size() == 5 && md::plain(out[0]).rfind("┌", 0) == 0);
-    assert(out[1].src == 3 && out[3].src == 5);
+    auto ds = md::directives(
+        "[//]: # \"import Calculator.Fixtures\"\n"                              // 1
+        "[//]: # \"decisionTable CalculatorFixture\"\n"                          // 2
+        "   [//]: # (decisionTable Calc#log -- snooze until 2026-12-01)\n"      // 3
+        "[//]:\t#  'decisionTable  Spaced '\n"                                  // 4
+        "    [//]: # \"decisionTable TooDeep\"\n"                               // 5: code
+        "[//]: # \"a comment\"\n"                                               // 6
+        "[//]: # (decisionTable Open\n"                                         // 7: unclosed
+        "[//]: #\"decisionTable NoSpace\"\n"                                    // 8
+        "```\n[//]: # \"decisionTable Fenced\"\n```\n"                          // 9-11
+        "[//]: # \"decisionTable After -- someday\"\n");                        // 12
+    assert(ds.size() == 5);
+    assert(ds[0].line == 1 && ds[0].import && ds[0].target == "Calculator.Fixtures");
+    assert(ds[1].line == 2 && !ds[1].import && ds[1].target == "CalculatorFixture" && ds[1].snooze.empty());
+    assert(ds[2].line == 3 && ds[2].target == "Calc#log" && ds[2].snooze == "2026-12-01");
+    assert(ds[3].line == 4 && ds[3].target == "Spaced");
+    assert(ds[4].line == 12 && ds[4].target == "After" && ds[4].snooze.empty());  // not a snooze
+    // snoozed through the date, in temoc's terms
+    assert(!md::expired(ds[2], "2026-11-30") && !md::expired(ds[2], "2026-12-01"));
+    assert(md::expired(ds[2], "2026-12-02") && !md::expired(ds[2], ""));
+    assert(!md::expired(ds[1], "2099-01-01"));  // not snoozed: nothing expires
+  }
+  // a directive shows as a badge before its table, which keeps its source
+  // lines; a test table's outputs (sum?) stand out, # comments are dim
+  {
+    std::string t =
+        "[//]: # \"import Calc.Fixtures\"\n"                        // 1
+        "[//]: # \"decisionTable Calc -- snooze until 2026-12-01\"\n"  // 2
+        "\n"
+        "| a | # why | sum? |\n"                                     // 4
+        "|---|---|---|\n"
+        "| 1 | one | 1 |\n";                                         // 6
+    auto out = md::render(t, 60, "2026-11-14");
+    assert(md::plain(out[0]) == "import Calc.Fixtures" && out[0].src == 1 && out[0].part == md::Part::Badge);
+    assert(out[0].spans[0].style == md::Dim);
+    assert(md::plain(out[1]) == "🧪 Calc · snoozed until 2026-12-01" && out[1].src == 2);
+    assert(out[1].spans.back().style == md::Warn);
+    assert(md::plain(out[2]).rfind("┌", 0) == 0 && out[2].part == md::Part::Table);
+    assert(out[3].src == 4 && out[5].src == 6 && out[6].part == md::Part::TableEnd);
+    auto style_of = [](const md::Line& l, const std::string& text) {  // spans of one style merge with padding
+      for (auto& s : l.spans)
+        if (s.text.find_first_not_of(' ') != std::string::npos &&
+            s.text.substr(s.text.find_first_not_of(' '), s.text.find_last_not_of(' ') - s.text.find_first_not_of(' ') + 1) == text)
+          return s.style;
+      return ~0u;
+    };
+    assert(style_of(out[3], "a") == md::Bold && style_of(out[3], "sum?") == (md::Bold | md::Output));
+    assert(style_of(out[3], "# why") == (md::Bold | md::Dim));
+    assert(style_of(out[5], "1") == 0 && style_of(out[5], "one") == md::Dim);
+    assert(md::plain(md::render(t, 60, "2026-12-02")[1]) == "🧪 Calc · snooze expired 2026-12-01");
+    // a plain table, or one a paragraph separates from the directive, is plain
+    auto plain_t = md::render("| a | b? |\n|---|---|\n| 1 | 2 |", 40);
+    assert(style_of(plain_t[1], "b?") == md::Bold);
+    auto apart = md::render("[//]: # \"decisionTable X\"\n\ntext\n\n| a | b? |\n|---|---|\n| 1 | 2 |", 40);
+    assert(md::plain(apart[0]) == "🧪 X" && md::plain(apart[1]) == "text");
+    assert(style_of(apart[4], "b?") == md::Bold);
+  }
+  // too wide, a test's comment column shrinks first; inputs stay whole
+  {
+    auto out = md::render(
+        "[//]: # \"decisionTable X\"\n\n| plan | # why | ok? |\n|---|---|---|\n| Enterprise | via SCIM sync | yes |", 30);
+    fits("[//]: # \"decisionTable X\"\n\n| plan | # why | ok? |\n|---|---|---|\n| Enterprise | via SCIM sync | yes |", 30);
+    assert(md::plain(out[2]) == "│ plan       │ # why   │ ok? │");
+    assert(md::plain(out[4]) == "│ Enterprise │ via     │ yes │");
+  }
+  // a badge goes where its directive is, even last, and in no list's box
+  assert(joined("- item\n\n[//]: # \"decisionTable X\"\n\n| a |\n|---|\n| 1 |", 40) ==
+         "• item\n\n🧪 X\n┌───┐\n│ a │\n├───┤\n│ 1 │\n└───┘\n");
+  assert(joined("text\n\n[//]: # \"import Y\"", 40) == "text\n\nimport Y\n");
+
+  // marks laid onto a rendered spec: a gutter glyph on the row, the worst
+  // when there are several; an error's text under the table; a badge's on
+  // it; line 0's at the top; ok and dim marks only their glyph
+  {
+    std::string t =
+        "Sums:\n"                                  // 1
+        "\n"
+        "[//]: # \"decisionTable Calc\"\n"         // 3
+        "\n"
+        "| a | sum? |\n"                           // 5
+        "|---|---|\n"
+        "| 1 | 1 |\n"                              // 7
+        "| 2 | 5 |\n"                              // 8
+        "| 3 | 3 |\n"                              // 9
+        "\n"
+        "A long paragraph that wraps onto\n"       // 11
+        "a second line.\n";                        // 12
+    std::vector<Mark> ms = {
+        {"s.md", 7, "ok", "✓", ""},
+        {"s.md", 8, "ok", "✓", ""},
+        {"s.md", 8, "error", "✗", "sum: expected 5, got 4"},
+        {"s.md", 9, "dim", "–", "skipped"},
+        {"s.md", 3, "error", "✗", "1 failed, 1 passed"},
+        {"s.md", 0, "error", "✗", "1 failed"},
+        {"s.md", 12, "warn", "", "line two"},  // inside the paragraph: its first line's
+    };
+    std::vector<std::string> got;
+    for (auto& l : md::annotate(md::render(t, 40 - md::kGutter), ms, 40)) got.push_back(md::plain(l));
+    std::vector<std::string> want = {
+        "✗  1 failed",
+        "",
+        "   Sums:",
+        "",
+        "✗  🧪 Calc · 1 failed, 1 passed",
+        "   ┌───┬──────┐",
+        "   │ a │ sum? │",
+        "   ├───┼──────┤",
+        "✓  │ 1 │ 1    │",
+        "✗  │ 2 │ 5    │",
+        "–  │ 3 │ 3    │",
+        "   └───┴──────┘",
+        "   ✗ line 8 · sum: expected 5, got 4",
+        "",
+        "•  A long paragraph that wraps onto a",
+        "   second line.",
+        "   • line 12 · line two",
+    };
+    if (got != want)
+      for (auto& g : got) std::fprintf(stderr, "[%s]\n", g.c_str());
+    assert(got == want);
+    for (auto& g : got) assert(ftxui::string_width(g) <= 40);
+    // a badge's text that doesn't fit goes under it
+    auto narrow = md::annotate(md::render(t, 20 - md::kGutter), ms, 20);
+    assert(md::plain(narrow[4]) == "✗  🧪 Calc" && md::plain(narrow[5]) == "      1 failed, 1");
+    // the tab's summary counts rows only, by glyph
+    auto counts = md::tally(ms, md::directives(t));
+    assert(counts.size() == 4);
+    assert(counts[0].glyph == "✓" && counts[0].n == 2 && counts[0].style == md::Ok);
+    assert(counts[1].glyph == "✗" && counts[1].n == 1 && counts[1].style == md::Error);
+    assert(counts[2].glyph == "•" && counts[2].style == md::Warn);
+    assert(counts[3].glyph == "–" && counts[3].style == md::Dim);
+    // no marks: only the empty gutter
+    assert(md::plain(md::annotate(md::render("x", 10), {}, 13)[0]) == "   x");
   }
 
   // paragraphs and list items know where they start
