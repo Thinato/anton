@@ -28,4 +28,8 @@ Fetch fetch_prs(const std::vector<std::string>& urls);
 // Returned as partial Prs.
 Fetch fetch_states(const std::vector<std::string>& urls);
 
+// A PR's description (markdown, "" if it has none), via `gh pr view`. On
+// failure returns "" and sets error to gh's first stderr line.
+std::string fetch_body(const std::string& url, std::string& error);
+
 }  // namespace anton

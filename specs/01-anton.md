@@ -11,7 +11,8 @@ anton has **no Slack knowledge**. Slack is one plugin among possible others
 
 ## Non-goals (v1)
 
-- Reviewing code inside the TUI (diffs, comments). Enter opens the browser.
+- Reviewing code inside the TUI (diffs, comments). Enter reads the PR's
+  description; `w` opens the browser for the rest.
 - Writing to GitHub (approve, merge, comment).
 - Persistence between runs. Everything is rebuilt at startup.
 - Any GitHub auth of its own. `gh auth status` must already succeed.
@@ -133,7 +134,7 @@ kinds, since `org:` and `repo:` are in the local subset.
  server      1270   +12 -40         ⚙ queued     1w   guininov            Feat/pipeline att…
  web          881    +88 -0         draft        3w   paulo               wip: new nav
 ─────────────────────────────────────────────────────────────────────────────────
- r refresh  / query  o org  p repo  x clear  ⏎ open  y copy url  q quit   ↻ 40s ago
+ r refresh  / query  o org  p repo  x clear  ⏎ read  w web  y copy  q quit   ↻ 40s ago
 ```
 
 - **REPO**: repo name; owner shown only if results span more than one owner.
@@ -220,7 +221,8 @@ Width is therefore at most 4 chars per side (`+999`, `-10k`).
 | key | |
 | --- | --- |
 | `j`/`k`, `↑`/`↓`, `g`/`G` | move |
-| `⏎` | open PR in browser (`gh pr view --web <url>`) |
+| `⏎` | read the PR's description (Reader, below) |
+| `w` | open PR in browser (`gh pr view --web <url>`) |
 | `y` | copy URL (`pbcopy` / `xclip` / `wl-copy`, first found) |
 | `r` | refresh now |
 | `/` `o` `p` `x` | filters (above) |
@@ -243,6 +245,42 @@ Live webhooks (`gh webhook forward`) were considered and rejected: they need
 repo/org admin, allow one forwarder per org, and are documented testing-only.
 Later: a relay (an org webhook into a small AWS service exposing a socket)
 could feed a plugin that tells anton to re-fetch a PR the moment it changes.
+
+## Reader
+
+`⏎` replaces the table with the selected PR's description: its title, then
+`repo#number  author  url`, then the body rendered as markdown, glow-style.
+`j`/`k`, `space`/PgDn, PgUp, `g`/`G` scroll and the footer shows how far
+down you are; `w` or `⏎` opens the PR in the browser, `y` copies its URL,
+`q`/`esc` goes back to the table.
+
+- The body comes from `gh pr view <url> --json body`, off the UI thread, and
+  is kept per URL for the session. It's fetched again when the PR's
+  `updatedAt` moves (editing the description bumps it). Meanwhile the reader
+  says `loading…`; a failure says why (reopening retries, and a failed
+  refetch keeps the text it had); an empty body reads `No description.`
+- Rendering (`src/markdown.cpp`, parsed by [md4c](https://github.com/mity/md4c)
+  in its GitHub dialect) is pure, text and width in, styled lines out, and
+  redone when the terminal's width changes. At most 120 columns wide.
+  Headings keep their `#`s and get a color per level; paragraphs wrap by
+  display width (CJK and emoji count two); lists nest with a hanging indent,
+  task items show `☐`/`☑`; quotes get a `│` bar; code blocks are dim and
+  never wrapped (a line too long ends in `…`); links show their URL dim after
+  the text unless the text is the URL; images read `[image: alt]`.
+- Tables get box borders and a line under the header, and keep each
+  column's alignment. One too wide for the screen shrinks its widest columns
+  until it fits and wraps text inside cells; then every row is separated, so
+  wrapped rows don't blur together.
+- PR templates are HTML-heavy: `<!-- comments -->` vanish,
+  `<details><summary>X</summary>` reads `▸ X` followed by the content, `<br>`
+  breaks the line, `<img alt>` is an image, other tags go and their text
+  stays.
+- Every display line keeps the source line it came from (each line of a
+  table row carries the row's), so marks can later be attached to table rows
+  by line number, e.g. temoc acceptance-test results.
+- Text goes through the same control-character filter as plugin output.
+
+The `n` note overlay renders notes with the same renderer.
 
 ## Configuration
 
@@ -327,6 +365,8 @@ Same toolchain as slkx, so the two feel like siblings:
   pinned tag). Its `ScreenInteractive::Post` is the thread-safe way for the
   `gh` worker and plugin reader threads to hand results to the UI.
 - nlohmann/json (system package or FetchContent, as slkx does).
+- [md4c](https://github.com/mity/md4c) parses markdown (FetchContent, pinned
+  tag; its one C file is built as a static library).
 - Subprocesses via `posix_spawnp` + pipes (`gh`, plugins). No shell, so query
   strings are never shell-interpreted.
 - macOS and Linux. No Windows in v1.
@@ -341,7 +381,8 @@ src/github.hpp/cpp    search + alias fetch, gh graphql call, JSON → Pr
 src/model.hpp         Pr, Tag, state derivation, compact(n), age(t),
                       qualifier editing, local query filter — pure
 src/plugins.hpp/cpp   spawn plugins, read JSONL, restart, fold into the store
-src/ui.hpp/cpp        FTXUI components: tabs, table, pickers, footer
+src/ui.hpp/cpp        FTXUI components: tabs, table, pickers, reader, footer
+src/markdown.hpp/cpp  markdown -> styled display lines (md4c) — pure
 plugins/slkx/main.cpp the anton-slkx executable (03-plugin-slkx.md)
 plugins/slkx/fold.hpp its pure event fold — testable without slkx
 plugins/llm/main.cpp  the anton-llm executable (04-plugin-llm.md)
@@ -349,6 +390,7 @@ plugins/llm/llm.hpp   its pure config parse, substitution, pr line
 tests/model_check.cpp assert-based self-check for model.hpp
 tests/fold_check.cpp  assert-based self-check for fold.hpp
 tests/llm_check.cpp   assert-based self-check for llm.hpp
+tests/markdown_check.cpp  assert-based self-check for markdown.cpp
 ```
 
 One CMake project, three executables. `anton-slkx` is built by default

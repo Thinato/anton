@@ -194,4 +194,13 @@ Fetch fetch_states(const std::vector<std::string>& urls) {
   return f;
 }
 
+std::string fetch_body(const std::string& url, std::string& error) {
+  Result r = run({"gh", "pr", "view", url, "--json", "body"}, "", true, 30);
+  json j = json::parse(r.out, nullptr, false);
+  if (r.code == 0 && j.is_object()) return sget(j, "body");
+  error = r.timed_out ? "gh timed out" : first_line(r.err.empty() ? r.out : r.err);
+  if (error.empty()) error = "gh: unreadable response";
+  return "";
+}
+
 }  // namespace anton

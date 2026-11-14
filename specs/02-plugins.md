@@ -73,7 +73,7 @@ shown in the `?` overlay for debugging.
 | `watch` | optional `true`: anton re-fetches this PR every `watch_seconds` (15) while it's open, e.g. one you're reviewing. Keep it to a handful. |
 | `status` | custom STATE value: `text` (≤ 10 chars shown), optional `glyph`. Ranking against GitHub's states is in `01-anton.md`. |
 | `tags` | annotations: `text`, optional `glyph`, optional `hint` (shown in the detail line). |
-| `note` | optional longer text, e.g. an LLM's review of the PR. `n` opens it in a scrollable overlay; the detail line says `n read note` when there is one. Markdown is shown as written, with prose wrapped, headings bold and code blocks kept as they are. Like everything else it must fit the 64 KiB line. |
+| `note` | optional longer text, e.g. an LLM's review of the PR. `n` opens it in a scrollable overlay; the detail line says `n read note` when there is one. It's rendered as markdown, the same way as a PR's description in the reader (`01-anton.md`). Like everything else it must fit the 64 KiB line. |
 
 **State, not deltas.** Every `pr` line is the *complete* truth for
 (plugin, PR) and replaces the previous one; an omitted field means "none"
