@@ -483,11 +483,9 @@ int main(int argc, char** argv) {
 
   if (g->plugins) g->plugins->stop();
   if (!shooting) ImGui::SaveIniSettingsToDisk(ini.c_str());
-  ImGui_ImplOpenGL3_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
-  ImGui::DestroyContext();
+  // No teardown: worker threads may still be blocked on a child process, and
+  // the process going away frees the window, the GL context and ImGui.
   glfwDestroyWindow(window);
-  glfwTerminate();
   std::fflush(stdout);
-  std::_Exit(exit_status);  // worker threads may still be blocked on a child process
+  std::_Exit(exit_status);
 }

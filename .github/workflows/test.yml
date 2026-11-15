@@ -53,7 +53,7 @@ jobs:
       - name: Install the GUI's build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xorg-dev libgl1-mesa-dev xvfb libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends xorg-dev libgl1-mesa-dev xvfb libgl1-mesa-dri gdb
 
       - name: Build
         run: |
@@ -70,9 +70,16 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p shots
+          # on a crash, the same run again under gdb for a backtrace
+          printf '#!/bin/sh\nexec gdb -q -batch -return-child-result -ex run -ex bt --args %s/build/anton-gui "$@"\n' "$PWD" > gdb-anton-gui
+          chmod +x gdb-anton-gui
           for screen in list reader settings palette; do
-            xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build/anton-gui ./docs/demo/run.sh \
-              --screenshot "shots/$screen.png" --screen "$screen" --pr 4812 --file specs/onboarding.md --palette-query temoc
+            echo "== $screen"
+            args="--screenshot shots/$screen.png --screen $screen --pr 4812 --file specs/onboarding.md --palette-query temoc"
+            xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build/anton-gui ./docs/demo/run.sh $args || {
+              xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON="$PWD/gdb-anton-gui" ./docs/demo/run.sh $args
+              exit 1
+            }
             test -s "shots/$screen.png"
           done
 
