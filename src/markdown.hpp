@@ -15,10 +15,10 @@
 namespace anton::md {
 
 // Ok, Error and Warn color a mark (green, red, yellow); Output is a temoc
-// table's expected-value column.
+// table's expected-value column; Note is a mark's note, a quieter red.
 enum Style : unsigned {
   Bold = 1, Italic = 2, Code = 4, Strike = 8, Link = 16, Dim = 32,
-  Ok = 64, Error = 128, Warn = 256, Output = 512
+  Ok = 64, Error = 128, Warn = 256, Output = 512, Note = 1024
 };
 
 struct Span {
@@ -40,6 +40,9 @@ struct Line {
   int src = 0;
   int heading = 0;  // 1-6 on a heading's lines
   Part part = Part::Text;
+  int test = 0;       // on a temoc test table's lines (borders too): its directive's line
+  bool head = false;  // a table's header row
+  unsigned tint = 0;  // Ok, Error or Warn: a background across the line (a row's result, a banner)
 };
 
 // A temoc directive: a link reference definition md4c renders as nothing,
@@ -72,10 +75,17 @@ std::vector<Line> render(const std::string& markdown, int width, const std::stri
 // were rendered kGutter cells narrower than width). Every line gets a
 // gutter holding the glyph of the worst mark on its source line, on the
 // first display line of it. A mark's line is the nearest rendered source
-// line at or above it. Texts: line 0's (and any above the first rendered
-// line) at the top; a badge's after the badge; an error's or a warning's
-// on a table row under the table, as `✗ line 13 · text`, and under the line
-// elsewhere. ok and dim marks are only their glyph.
+// line at or above it; a mark's text may hold several lines.
+// - A table row is tinted by its worst mark (ok, error, warn), and an error's
+//   or warning's text goes under the row, inside the table, a line each
+//   (Note-red, Dim for a warning).
+// - A badge's marks are its table's result: a footer inside the table's
+//   border, `✗ failed · 1 of 8`, then the rest of the text Note-red. With no
+//   table after it, the text goes after the badge.
+// - Line 0's (and any above the first rendered line) go at the top; a
+//   banner mark is a tinted line across the width.
+// - Elsewhere an error's or warning's text goes under the line, as
+//   `✗ line 13 · text`. ok and dim marks are only their glyph.
 constexpr int kGutter = 3;
 std::vector<Line> annotate(const std::vector<Line>& lines, const std::vector<Mark>& marks, int width);
 

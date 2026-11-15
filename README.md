@@ -75,8 +75,9 @@ buttons, the wheel. Every button shows its key, and `?` lists every command.
 
 `anton --query 'repo:me/thing is:open'` opens a single ad-hoc tab.
 
-On a wide terminal the reader has an outline on the right: headings, each
-temoc spec table with its result, and a button to run the specs again.
+On a wide terminal the reader has an outline on the right: headings, or on
+a temoc spec the file's result, each table's, what did not pass, and the
+command that ran.
 
 SIZE is `+additions -deletions` in short form (`+12k -40`): green when small,
 red when it'll eat your afternoon. STATE shows the one thing that matters most,
@@ -287,34 +288,47 @@ their fixture server, in `~/.config/anton/temoc.json`:
 { "name": "temoc", "command": ["anton-temoc"] }
 ```
 
+A fresh worktree has no `node_modules` or built packages; if the fixture
+server needs them, give the repo a `setup` command, run in the checkout
+before temoc:
+
+```json
+"setup": ["sh", "-c", "pnpm install --frozen-lockfile --ignore-scripts && pnpm --filter @acme/utils build"]
+```
+
 Press `T` on a PR: it checks out the PR's head in a temporary worktree,
 runs `temoc --output jsonl` on the changed `.md` files that have a
 `decisionTable` table, and tags the row `🧪 temoc…`, then `🧪 14 ✓` or
 `🧪 2 ✗ 12 ✓` (`💤 4` for snoozed rows). `n` lists each failing row as
 `file:line` with what was expected and what came back.
 
-`⏎` then `Tab` opens the spec itself, with each row marked:
+`⏎` then `Tab` opens the spec itself, with its results laid out the way
+[temoc-ui](https://github.com/killertux/temoc-ui) does: each row tinted
+and marked (`✓` passed, `✗` failed, `!` error, `~` snoozed, `-` skipped,
+`⋯` running), what didn't pass under it, and each table's result:
 
 ```
- Description │ 🧪 calculator.md ✓ 10 ✗ 1 💤 1 │
-──────────────────────────────────────────────────────────
-  ✗  1 failed, 10 passed, 1 snoozed
-
-     import Calculator.Fixtures
-  ✗  🧪 CalculatorFixture · 1 failed, 3 passed
-     ┌────┬─────┬──────┐
-     │ a  │ b   │ sum? │
-     ├────┼─────┼──────┤
-  ✓  │ 1  │ 2   │ 3    │
-  ✗  │ 2  │ 2   │ 5    │
-  ✓  │ 10 │ 5   │ 15   │
-     └────┴─────┴──────┘
-     ✗ line 13 · sum: expected 5, got 4
+ Description │ 🧪 failing.md ✓ 2 ✗ 1 │
+──────────────────────────────────────────
+     ## Multiplication
+  ✗  🧪 Calculator
+     ┌───┬───┬───────────────────────┐
+  ▶  │ a │ b │ mul?                  │
+     ├───┼───┼───────────────────────┤
+  ✓  │ 2 │ 3 │ 6                     │
+  ✗  │ 2 │ 2 │ 5                     │
+     │   mul expected 5, got 4       │
+     ├───┴───┴───────────────────────┤
+     │ ✗ failed · 1 of 2             │
+     └───────────────────────────────┘
 ```
 
-Any `.md` the PR changes gets a tab, specs first. temoc's hidden
-directives show as `🧪 Fixture` badges (with `· snoozed until …`), and a
-test's expected-value columns (`sum?`) stand out from its inputs.
+Rows fill in as temoc runs them. The `▶` on a table's header (or on a row,
+under the mouse) runs just that table or row; `J`/`K` pick a table and `r`
+runs it, `T` runs the file. Any `.md` the PR changes gets a tab, specs
+first. temoc's hidden directives show as `🧪 Fixture` badges (with
+`· snoozed until …`), and a test's expected-value columns (`sum?`) stand
+out from its inputs.
 
 This runs the PR's code on your machine, like running its tests yourself:
 the fixtures and, with a `config` inside the repo, the server command the PR
@@ -340,5 +354,9 @@ and they must pass to merge. Every merged PR publishes the next release,
 `CMakeLists.txt` to start a new major.minor.
 
 `docs/demo/run.sh` runs anton on made-up PRs with a fake `gh`, a fake Slack
-plugin and a fake temoc run (`⏎` then `Tab` on the top PR of Code review).
+plugin and a fake temoc (`⏎` then `Tab` on the top PR of Code review; its
+`billing.md` tab shows a run that failed outside its rows, `trials.md` one
+not run yet, and `T`, `r` or a `▶` click replays a run phase by phase and
+row by row). `DEMO_TEMOC=badconfig` or `DEMO_TEMOC=crash` before it shows a
+broken temoc.json or a plugin that won't start.
 The screenshot comes from it.

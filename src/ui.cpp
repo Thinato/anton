@@ -403,6 +403,8 @@ void Ui::on_plugin_line(size_t i, const std::string& line, bool is_err) {
   bool was_ok = st.health == "ok";
   std::string url = apply_line(st, line);
   if (!was_ok && st.health == "ok") notify_approved();  // ready (again): catch it up
+  if (auto it = st.prs.find(url); it != st.prs.end() && !it->second.tags.empty() && !it->second.tags[0].glyph.empty())
+    last_glyph[i] = it->second.tags[0].glyph;
   if (one_shot(i)) {  // health shows live even while the PRs wait for the run to end
     live[i].health = st.health;
     live[i].health_text = st.health_text;
@@ -452,14 +454,24 @@ std::vector<Ui::PluginKey> Ui::plugin_keys() const {
 }
 
 // A plugin-declared key on a PR. False if no plugin claims it.
-bool Ui::plugin_action(const std::string& key, const std::string& url) {
+bool Ui::plugin_action(const std::string& key, const std::string& url, const std::string& file, int line) {
   for (auto& [i, a] : plugin_keys()) {
     if (a.key != key) continue;
     if (url.empty()) return true;
     std::string pr = url;
     if (auto c = cache.find(url); c != cache.end()) pr = c->second.repo + "#" + std::to_string(c->second.number);
-    bool ok = plugins && plugins->send(i, nlohmann::json({{"action", a.id}, {"pr", url}}).dump());
-    flash(cfg.plugins[i].name + ": " + (ok ? (a.label.empty() ? a.id : a.label) + " — " + pr : "not running"));
+    nlohmann::json msg = {{"action", a.id}, {"pr", url}};
+    std::string what = a.label.empty() ? a.id : a.label;
+    if (a.line && !file.empty()) {
+      msg["file"] = file;
+      what = "run " + file;
+      if (line > 0) {
+        msg["line"] = line;
+        what += ":" + std::to_string(line);
+      }
+    }
+    bool ok = plugins && plugins->send(i, msg.dump());
+    flash(cfg.plugins[i].name + ": " + (ok ? what + " — " + pr : "not running"));
     return true;
   }
   return false;
@@ -993,7 +1005,32 @@ std::vector<MenuItem> Ui::commands(const Pr* cur) {
     std::function<void()> run;
   };
   std::vector<Cmd> c;
-  if (cur) {
+  if (mode == Mode::Reader) {  // the reader's keys, on the PR it shows
+    const FileTab* ft = reader_tab_file();
+    bool spec = ft && ft->spec;
+    std::string url = reader_url, path = spec ? ft->path : "";
+    auto key = [this](Event e) { return [this, e] { reader_key(e); }; };
+    c.push_back({"READER", "Back to the list", "esc", key(Event::Escape)});
+    c.push_back({"READER", "Next file", "Tab", key(Event::Tab)});
+    c.push_back({"READER", "Previous file", "⇧Tab", key(Event::TabReverse)});
+    if (spec) {
+      c.push_back({"READER", "Next test table", "J", key(Event::Character('J'))});
+      c.push_back({"READER", "Previous test table", "K", key(Event::Character('K'))});
+      if (line_key()) c.push_back({"READER", "Run the focused test table", "r", key(Event::Character('r'))});
+    }
+    for (auto& [i, a] : plugin_keys()) {
+      std::string name = " · " + cfg.plugins[i].name;
+      if (a.line && spec) {
+        c.push_back({"READER", "Run this file" + name, a.key, [this, k = a.key, url, path] { plugin_action(k, url, path); }});
+        c.push_back({"READER", capital(a.label.empty() ? a.id : a.label) + name, "", [this, k = a.key, url] { plugin_action(k, url); }});
+      } else {
+        c.push_back({"READER", capital(a.label.empty() ? a.id : a.label) + name, a.key, [this, k = a.key, url] { plugin_action(k, url); }});
+      }
+    }
+    c.push_back({"READER", "Open in browser", "w", key(Event::Character('w'))});
+    c.push_back({"READER", "Copy URL", "y", key(Event::Character('y'))});
+  }
+  if (cur && mode != Mode::Reader) {
     Pr pr = *cur;
     c.push_back({"THIS PR", "Read description and files", "⏎", [this, pr] { open_reader(pr); }});
     c.push_back({"THIS PR", "Open in browser", "w", [this, pr] { open(pr.url); }});
@@ -1003,26 +1040,28 @@ std::vector<MenuItem> Ui::commands(const Pr* cur) {
       c.push_back({"THIS PR", capital(a.label.empty() ? a.id : a.label) + " · " + cfg.plugins[i].name, a.key,
                    [this, key = a.key, url = pr.url] { plugin_action(key, url); }});
   }
-  c.push_back({"LIST", "Add filter…", "f", [this] { open_add_filter(); }});
-  c.push_back({"LIST", "Edit query", "/", [this] { start_query(); }});
-  c.push_back({"LIST", "Sort by…", "", [this] { open_sort_menu(); }});
-  c.push_back({"LIST", "Next sort", "s", [this] { act("s", nullptr); }});
-  c.push_back({"LIST", "Pick org", "o", [this] { open_picker(false); }});
-  c.push_back({"LIST", "Pick repo", "p", [this] { open_picker(true); }});
-  c.push_back({"LIST", "Clear org/repo", "x", [this] { act("x", nullptr); }});
-  c.push_back({"LIST", "Refresh", "r", [this] { refresh(); }});
-  for (size_t i = 0; i < tabs.size() && i < 9; ++i)
-    c.push_back({"VIEWS", "Go to " + tabs[i].v.name, std::to_string(i + 1), [this, i] { switch_view(i); }});
-  c.push_back({"VIEWS", "Next view", "Tab", [this] { switch_view((active + 1) % tabs.size()); }});
-  c.push_back({"VIEWS", "Previous view", "⇧Tab", [this] { switch_view((active + tabs.size() - 1) % tabs.size()); }});
-  c.push_back({"VIEWS", "New view", "+", [this] { new_view(); }});
-  if (modified(active)) {
-    c.push_back({"VIEWS", "Save filters to view", "S", [this] { save_view(active); }});
-    if (tabs[active].saved) c.push_back({"VIEWS", "Revert view to saved", "", [this] { revert_view(active); }});
-  }
-  c.push_back({"VIEWS", "View menu: rename, duplicate, delete…", "m", [this] { open_tab_menu(active); }});
-  c.push_back({"VIEWS", "Move view left", "<", [this] { move_view(active, -1); }});
+  if (mode != Mode::Reader) {  // the list behind the reader is not what the keys act on
+    c.push_back({"LIST", "Add filter…", "f", [this] { open_add_filter(); }});
+    c.push_back({"LIST", "Edit query", "/", [this] { start_query(); }});
+    c.push_back({"LIST", "Sort by…", "", [this] { open_sort_menu(); }});
+    c.push_back({"LIST", "Next sort", "s", [this] { act("s", nullptr); }});
+    c.push_back({"LIST", "Pick org", "o", [this] { open_picker(false); }});
+    c.push_back({"LIST", "Pick repo", "p", [this] { open_picker(true); }});
+    c.push_back({"LIST", "Clear org/repo", "x", [this] { act("x", nullptr); }});
+    c.push_back({"LIST", "Refresh", "r", [this] { refresh(); }});
+    for (size_t i = 0; i < tabs.size() && i < 9; ++i)
+      c.push_back({"VIEWS", "Go to " + tabs[i].v.name, std::to_string(i + 1), [this, i] { switch_view(i); }});
+    c.push_back({"VIEWS", "Next view", "Tab", [this] { switch_view((active + 1) % tabs.size()); }});
+    c.push_back({"VIEWS", "Previous view", "⇧Tab", [this] { switch_view((active + tabs.size() - 1) % tabs.size()); }});
+    c.push_back({"VIEWS", "New view", "+", [this] { new_view(); }});
+    if (modified(active)) {
+      c.push_back({"VIEWS", "Save filters to view", "S", [this] { save_view(active); }});
+      if (tabs[active].saved) c.push_back({"VIEWS", "Revert view to saved", "", [this] { revert_view(active); }});
+    }
+    c.push_back({"VIEWS", "View menu: rename, duplicate, delete…", "m", [this] { open_tab_menu(active); }});
+    c.push_back({"VIEWS", "Move view left", "<", [this] { move_view(active, -1); }});
   c.push_back({"VIEWS", "Move view right", ">", [this] { move_view(active, 1); }});
+  }
   c.push_back({"ANTON", "Settings", ",", [this] { open_settings(); }});
   c.push_back({"ANTON", "Open config.json in $EDITOR", "e", [this] { edit_config(); }});
   c.push_back({"ANTON", "Quit", "q", [this] { screen.Exit(); }});

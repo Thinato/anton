@@ -216,6 +216,7 @@ struct Renderer {
   std::vector<Directive> dirs;
   size_t next_dir = 0;  // the first directive not shown yet
   bool test_next = false;  // a decisionTable badge was the last line out: the next table is a test
+  int test_dir = 0;        // ...and that badge's directive line
   std::vector<size_t> line_starts;
   std::vector<Line> out;
 
@@ -318,6 +319,7 @@ struct Renderer {
         out.push_back(std::move(l));
       }
       test_next = !d.import;
+      if (!d.import) test_dir = d.line;
     }
   }
 
@@ -482,6 +484,7 @@ struct Renderer {
         std::string h = strip(text_of(rows[0].cells[c]));
         col_style[c] = h.starts_with("#") ? Dim : h.find('?') != std::string::npos ? Output : 0;
       }
+    const int test = test_next ? test_dir : 0;
     test_next = false;
     std::vector<int> w(ncols, 1);
     for (auto& r : rows)
@@ -504,6 +507,7 @@ struct Renderer {
       std::string s = l;
       for (size_t c = 0; c < ncols; ++c) s += repeat("─", w[c] + 2) + (c + 1 < ncols ? m : r);
       emit({{s, Dim}}, 0, 0, part);
+      out.back().test = test;
     };
     bool tall = false;  // a wrapped row: separate every row, or they blur
     std::vector<std::vector<std::vector<std::vector<Span>>>> wrapped;
@@ -534,6 +538,8 @@ struct Renderer {
           add(line, "│", Dim);
         }
         emit(std::move(line), rows[ri].src, 0, Part::Table);
+        out.back().test = test;
+        out.back().head = rows[ri].head;
       }
       bool last = ri + 1 == rows.size();
       if (!last && (rows[ri].head != rows[ri + 1].head || tall)) border("├", "┼", "┤");
@@ -765,28 +771,89 @@ std::vector<Line> annotate(const std::vector<Line>& lines, const std::vector<Mar
     if (it == first.begin()) top.push_back(&m);
     else on[std::prev(it)->second].push_back(&m);
   }
-  // Texts go after the block: a badge's whole, a table's bottom border, a
-  // paragraph's last wrapped line.
-  std::map<size_t, std::vector<const Mark*>> after;
+  auto worst = [](const std::vector<const Mark*>& ms) {
+    return *std::max_element(ms.begin(), ms.end(), [](const Mark* a, const Mark* b) { return rank(a->level) < rank(b->level); });
+  };
+  auto noted = [](const Mark* m) { return !m->text.empty() && (m->level == "error" || m->level == "warn"); };
+
+  // Where texts go: after a block's last line (a row's, a paragraph's, a
+  // badge's), or as a footer in place of a test table's bottom border.
+  std::map<size_t, std::vector<const Mark*>> after, footer;
+  std::vector<unsigned> tint(lines.size(), 0);
   for (size_t i = 0; i < lines.size(); ++i) {
     if (on[i].empty()) continue;
+    const Line& l = lines[i];
     size_t end = i;
-    if (lines[i].part == Part::Table)
-      while (lines[end].part != Part::TableEnd && end + 1 < lines.size()) ++end;
-    else
-      while (end + 1 < lines.size() && lines[end + 1].src == lines[i].src && lines[end + 1].part == lines[i].part) ++end;
-    for (auto* m : on[i])
-      if (!m->text.empty() && (lines[i].part == Part::Badge || m->level == "error" || m->level == "warn"))
-        after[end].push_back(m);
+    while (end + 1 < lines.size() && lines[end + 1].src == l.src && lines[end + 1].part == l.part) ++end;
+    if (l.part == Part::Badge) {
+      size_t bottom = 0;
+      for (size_t k = i + 1; k < lines.size() && !bottom; ++k)
+        if (lines[k].part == Part::TableEnd && lines[k].test == l.src) bottom = k;
+      for (auto* m : on[i])
+        if (bottom) footer[bottom].push_back(m);
+        else if (!m->text.empty()) after[end].push_back(m);
+    } else if (l.part == Part::Table) {
+      unsigned t = level_style(worst(on[i])->level);
+      for (size_t k = i; k <= end; ++k) tint[k] = t == Dim ? 0 : t;
+      for (auto* m : on[i])
+        if (noted(m)) after[end].push_back(m);
+    } else {
+      for (auto* m : on[i])
+        if (noted(m)) after[end].push_back(m);
+    }
+  }
+
+  // A table's indent (whatever is left of it: a quote's bar, a list's
+  // indent) and the width inside its border, from its bottom border.
+  auto prefix_of = [](const Line& bottom) {
+    std::string t = text_of(bottom.spans);
+    return t.substr(0, t.find("└"));
+  };
+  auto indent_of = [&](const Line& bottom) { return cells(prefix_of(bottom)); };
+  auto inner_of = [&](const Line& bottom) { return std::max(1, cells(text_of(bottom.spans)) - indent_of(bottom) - 2); };
+  // A table's last column grows to hold its notes and footer, up to the width.
+  std::vector<Line> ls = lines;
+  std::vector<size_t> bottom_of(ls.size(), 0);  // a table line's bottom border
+  for (size_t a = 0; a < ls.size(); ++a) {
+    if (ls[a].part != Part::Table || (a > 0 && ls[a - 1].part == Part::Table)) continue;  // not a table's top
+    size_t b = a;
+    while (b < ls.size() && ls[b].part == Part::Table) ++b;
+    if (b == ls.size() || ls[b].part != Part::TableEnd) continue;
+    std::fill(bottom_of.begin() + static_cast<long>(a), bottom_of.begin() + static_cast<long>(b) + 1, b);
+    int need = 0;
+    auto lines_need = [&](const std::string& text, int pad) {
+      std::istringstream in(text);
+      for (std::string l; std::getline(in, l);) need = std::max(need, cells(l) + pad);
+    };
+    for (size_t k = a; k < b; ++k)
+      if (auto it = after.find(k); it != after.end())
+        for (auto* m : it->second) lines_need(m->text, 4);
+    if (auto f = footer.find(b); f != footer.end())
+      for (auto* m : f->second) lines_need(m->text, 4 + cells(glyph(*m)));
+    int extra = std::min(need, width - kGutter - indent_of(ls[b]) - 2) - inner_of(ls[b]);
+    for (size_t k = a; k <= b && extra > 0; ++k) {
+      Span& last = ls[k].spans.back();  // a row's closing "│", or a border ending in its corner
+      if (last.text == "│") ls[k].spans.insert(ls[k].spans.end() - 1, {std::string(static_cast<size_t>(extra), ' '), 0});
+      else if (last.text.size() >= 3) last.text.insert(last.text.size() - 3, repeat("─", extra));
+    }
   }
 
   std::vector<Line> out;
-  auto gutter = [](const std::vector<const Mark*>& ms) -> Span {
+  auto gutter = [&](const std::vector<const Mark*>& ms) -> Span {
     if (ms.empty()) return {std::string(kGutter, ' '), 0};
-    const Mark* w = *std::max_element(ms.begin(), ms.end(),
-                                      [](const Mark* a, const Mark* b) { return rank(a->level) < rank(b->level); });
+    const Mark* w = worst(ms);
     std::string g = glyph(*w);
     return {g + std::string(static_cast<size_t>(std::max(0, kGutter - cells(g))), ' '), level_style(w->level)};
+  };
+  // A text's lines as spans, hard breaks between.
+  auto spans_of = [](const std::string& text, unsigned style) {
+    std::vector<Span> sp;
+    std::istringstream in(text);
+    for (std::string l; std::getline(in, l);) {
+      if (!sp.empty()) sp.push_back({"\n", 0});
+      sp.push_back({l, style});
+    }
+    return sp;
   };
   // spans wrapped past the gutter, which the first line may fill.
   auto lines_of = [&](const std::vector<Span>& spans, Span head, int indent) {
@@ -798,34 +865,103 @@ std::vector<Line> annotate(const std::vector<Line>& lines, const std::vector<Mar
       out.push_back(std::move(l));
     }
   };
-  for (auto* m : top) lines_of({{m->text, 0}}, gutter({m}), 0);
-  if (!top.empty() && !lines.empty()) out.emplace_back();
-  for (size_t i = 0; i < lines.size(); ++i) {
-    Line l = lines[i];
-    l.spans.insert(l.spans.begin(), gutter(on[i]));
-    auto it = after.find(i);
-    if (it == after.end()) {
+  // A line inside the table whose bottom border is ls[b]: its indent and
+  // outer border, spans in between, padded to its width.
+  auto boxed = [&](size_t b, std::vector<Span> spans, Part part = Part::Table) {
+    int inner = inner_of(ls[b]);
+    Line l;
+    l.part = part;
+    l.test = ls[b].test;
+    l.spans = {{std::string(kGutter, ' '), 0}};
+    add(l.spans, prefix_of(ls[b]), Dim);  // a quote's bar, a list's indent
+    add(l.spans, "│", Dim);
+    int used = 0;
+    for (auto& s : spans) {
+      std::string c = cut(s.text, inner - used);
+      add(l.spans, c, s.style);
+      used += cells(c);
+    }
+    add(l.spans, std::string(static_cast<size_t>(std::max(0, inner - used)), ' '), 0);
+    add(l.spans, "│", Dim);
+    return l;
+  };
+  // Notes inside a table, under a row: a line each, wrapped, indented.
+  auto notes = [&](size_t b, const std::string& text, unsigned style, unsigned tinted) {
+    for (auto& w : wrap(spans_of(text, style), std::max(4, inner_of(ls[b]) - 4))) {
+      std::vector<Span> sp = {{"   ", 0}};
+      sp.insert(sp.end(), w.begin(), w.end());
+      Line l = boxed(b, sp);
+      l.tint = tinted;
       out.push_back(std::move(l));
+    }
+  };
+
+  // The file's state: a line across the width, tinted by level (a banner
+  // red), the text bold in its color.
+  for (auto* m : top) {
+    unsigned st = m->banner ? Error : level_style(m->level);
+    auto wrapped = wrap(spans_of(m->text, st), std::max(8, width - kGutter - 2));
+    for (size_t k = 0; k < wrapped.size(); ++k) {
+      Line l;
+      l.tint = st == Dim ? 0 : st;
+      l.spans = {k ? Span{std::string(kGutter, ' '), 0} : gutter({m}), {" ", 0}};
+      for (auto& s : wrapped[k]) add(l.spans, s.text, s.style | Bold);
+      add(l.spans, std::string(static_cast<size_t>(std::max(0, width - cells(text_of(l.spans)))), ' '), 0);
+      out.push_back(std::move(l));
+    }
+  }
+  if (!top.empty() && !lines.empty()) out.emplace_back();
+  for (size_t i = 0; i < ls.size(); ++i) {
+    Line l = ls[i];
+    l.spans.insert(l.spans.begin(), gutter(on[i]));
+    l.tint = tint[i];
+    if (auto f = footer.find(i); f != footer.end()) {  // the table's result inside its border
+      Line sep = l;
+      for (auto& s : sep.spans) {
+        if (size_t at = s.text.find("└"); at != std::string::npos) s.text.replace(at, std::string("└").size(), "├");
+        if (size_t at = s.text.rfind("┘"); at != std::string::npos) s.text.replace(at, std::string("┘").size(), "┤");
+      }
+      sep.part = Part::Table;
+      out.push_back(std::move(sep));
+      for (auto* m : f->second) {
+        std::istringstream in(m->text);
+        std::string head;
+        std::getline(in, head);
+        out.push_back(boxed(i, {{" " + glyph(*m) + (head.empty() ? "" : " " + head), level_style(m->level)}}));
+        std::string rest((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (rest.find_first_not_of(" \n") != std::string::npos) notes(i, rest, m->level == "error" ? Note : Dim, 0);
+      }
+      Line bottom = boxed(i, {}, Part::TableEnd);
+      bottom.spans = {{std::string(kGutter, ' '), 0}, {prefix_of(ls[i]) + "└" + repeat("─", inner_of(ls[i])) + "┘", Dim}};
+      out.push_back(std::move(bottom));
       continue;
     }
-    if (l.part == Part::Badge) {  // on the badge if it fits, else under it
+    const Line& src = ls[i];
+    out.push_back(std::move(l));
+    auto it = after.find(i);
+    if (it == after.end()) continue;
+    if (src.part == Part::Table) {
+      if (ls[bottom_of[i]].part == Part::TableEnd)
+        for (auto* m : it->second) notes(bottom_of[i], m->text, m->level == "error" ? Note : Dim, tint[i]);
+    } else if (src.part == Part::Badge) {  // on the badge if it fits, else under it
       std::vector<Span> extra;
       for (auto* m : it->second) {
         extra.push_back({" · ", Dim});
         extra.push_back({m->text, level_style(m->level)});
       }
-      bool fits = cells(text_of(l.spans)) + cells(text_of(extra)) <= width;
-      if (fits) l.spans.insert(l.spans.end(), extra.begin(), extra.end());
-      out.push_back(std::move(l));
-      if (!fits)
+      Line& b = out.back();
+      bool fits = cells(text_of(b.spans)) + cells(text_of(extra)) <= width;
+      if (fits) b.spans.insert(b.spans.end(), extra.begin(), extra.end());
+      else
         for (auto* m : it->second)  // under the fixture's name, past "🧪 "
-          lines_of({{m->text, level_style(m->level)}}, {std::string(kGutter + 3, ' '), 0}, 3);
-      continue;
+          lines_of(spans_of(m->text, level_style(m->level)), {std::string(kGutter + 3, ' '), 0}, 3);
+    } else {
+      for (auto* m : it->second) {
+        std::vector<Span> sp = {{glyph(*m), level_style(m->level)}, {" line " + std::to_string(m->line) + " · ", Dim}};
+        for (auto& s : spans_of(m->text, 0)) sp.push_back(s);
+        lines_of(sp, {std::string(kGutter, ' '), 0}, 2);
+      }
     }
-    out.push_back(std::move(l));
-    for (auto* m : it->second)
-      lines_of({{glyph(*m), level_style(m->level)}, {" line " + std::to_string(m->line) + " ·", Dim}, {" " + m->text, 0}},
-               {std::string(kGutter, ' '), 0}, 2);
   }
   return out;
 }

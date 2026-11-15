@@ -226,7 +226,10 @@ terminal selects text as usual.
 
 A filterable list of every action with its key, grouped THIS PR, LIST,
 VIEWS, ANTON, plugin actions included (`<label> · <plugin>`); type to
-filter, `↑`/`↓`, `⏎` or a click runs one. Every key works without it.
+filter, `↑`/`↓`, `⏎` or a click runs one. Every key works without it. In
+the reader it's READER (back, next/previous file, `J`/`K` next/previous
+test table, `r` run the focused table, `T` run this file, the plugin
+actions, browser, copy) and ANTON.
 Plugin health and stderr moved to Settings › General › Plugins.
 
 ## Columns
@@ -342,6 +345,10 @@ Width is therefore at most 4 chars per side (`+999`, `-10k`).
 | `q` | quit |
 | *plugin keys* | declared by a running plugin, e.g. `v` (anton-slkx: toggle 👀 in Slack) on the selected PR, also shown as buttons. anton's own keys win a clash. See `02-plugins.md`. |
 
+In the reader: `j`/`k`… scroll, `Tab`/`[`/`]` switch files, `J`/`K` focus
+the next/previous test table, `r` runs it, `T` runs the spec file (the
+description: every spec), `?` the palette (Reader, below).
+
 Menus: `↑`/`↓` (`j`/`k` when there's nothing to type), `⏎` runs, `→`
 opens a submenu, `←`/`esc` goes back, and a row's key (`S`, `<`) runs it.
 
@@ -367,19 +374,40 @@ right (the URL, or a file's `path @ sha`); a row of tabs, the open one
 underlined; then the body rendered as markdown, glow-style, with a
 scrollbar. `j`/`k`, `space`/PgDn, PgUp, `g`/`G` and the wheel scroll, and the
 footer says `lines a–b of N`; `w` or `⏎` opens the PR in the browser, `y`
-copies its URL, `q`/`esc` goes back to the table. Plugin keys work here
-too, on this PR (`T` runs its temoc specs). The footer's buttons: `esc
-Back`, `Tab Next file`, one per plugin action, `w Browser`, `y Copy URL`.
+copies its URL, `q`/`esc` goes back to the table, `?` opens the palette
+with the reader's keys. Plugin keys work here too, on this PR (`T` runs its
+temoc specs; on a spec file's tab, just that file). The footer's buttons:
+`esc Back`, `Tab Next file`, one per plugin action (`T Run file` on a spec
+file), `r Run table` on a spec file, `w Browser`, `y Copy URL`.
 
-On terminals 120 columns or wider an outline sits on the right, `ON THIS
-PAGE`: the headings (levels 1-3) and, in a file, each temoc table
-(`decisionTable` directive) with the worst result on it (`✗ StepsFixture`,
-`💤 UpgradeFixture`), in source order; the section you're reading is
-highlighted, and a click jumps there (to the first display line of that
-source line or after). Under it, a block per plugin with marks on the file:
-its name, the counts (`✓ 5  ✗ 2  💤 1`), the commit it ran on and whether
-that's still the head, and a button per action that plugin offers (`T Run
-specs`).
+**Running tests from the reader**, as temoc-ui does, through the first
+plugin action that takes a line (`02-plugins.md`, actions; anton-temoc's
+`T`). In a spec file each test table's header row has a `▶` in its gutter,
+and a row shows one while the mouse is over it; a click on it runs that
+table or row. One test table is focused, the first at first: its header is
+highlighted, `J`/`K` focus the next/previous one and scroll to it, a click
+on a table focuses it, and `r` runs it. The keys don't clash with the
+reader's own (`Tab`/`[`/`]` switch files, `j`/`k` scroll). The plugin
+clears the results of what it's about to run and fills them in as they
+come.
+
+On terminals 120 columns or wider an outline sits on the right. In a spec
+file (a `decisionTable` directive) it's temoc-ui's side panel: `THIS FILE`
+and the file's result (`failed · 2 of 12`, colored); `TABLES`, each test
+table with its mark, its name (the nearest heading above it, else its
+fixture) and its result word (`failed`, `not run`), the focused one
+highlighted, a click focusing it and jumping there; `WHAT DID NOT PASS`,
+`<table>, line N` and the first line of its message for each error mark,
+a click jumping to it; `LAST COMMAND`, the plugin's `command`, and the
+commit it ran on (yellow when the PR has moved on); the plugin's buttons
+(`T Run file`, `r Run table`); then `ON THIS PAGE`, the headings, if they
+fit. Anywhere else it's `ON THIS PAGE`: the headings (levels 1-3) and, in a
+file, each temoc table with the worst result on it, in source order; the
+section you're reading is highlighted, and a click jumps there (to the
+first display line of that source line or after). Under it, a block per
+plugin with marks on the file: its name, the counts (`✓ 5  ✗ 2  ~ 1`), the
+commit it ran on and whether that's still the head, and a button per
+action that plugin offers.
 
 The team reads more markdown than code, so the reader also shows the
 markdown files the PR adds or changes, each in a tab after `Description`:
@@ -420,15 +448,39 @@ on screen.
   cells; a `# comment` column is dim, and is the first to shrink when the
   table is too wide. Other tables are as below.
 - **Marks** (`02-plugins.md`): on a file's tab, every plugin's marks on
-  that file. Each line gets a 3-column gutter, left of any table, with the
-  glyph of the worst mark on its source line, colored by level (ok green,
-  error red, warn yellow, dim dim). An error's or warning's text goes under
-  its line, and for a table row under the table: `✗ line 13 · sum:
-  expected 5, got 4`. A mark on a directive belongs to its badge, its text
-  after it (`🧪 CalculatorFixture · 1 failed, 3 passed`, or on the next line
-  when that doesn't fit); line 0's are at the top. When a plugin's
-  `marks.ref` isn't the head the tab shows, the tab starts with `temoc:
-  results are for 86fa3ad; the PR has moved on`.
+  that file, laid out like temoc-ui's results. Each line gets a 3-column
+  gutter, left of any table, with the glyph of the worst mark on its source
+  line, colored by level (ok green, error red, warn yellow, dim dim).
+  - A marked table row is tinted across the table by its worst mark,
+    subtly (passed green, failed and error red, snoozed yellow; skipped
+    and running not at all), the mark included; colour is never the only
+    signal, the glyph says it too. An error's or warning's text goes on the
+    lines right under the row, inside the table, indented, a line each
+    (`mul expected 5, got 4`): a quieter red than the row for an error, dim
+    for a snoozed row's warning.
+  - A mark on a directive is its table's result: a footer inside the
+    table's border, `✗ failed · 1 of 8`, and under it, in the quiet red,
+    the failures that belong to the table and not a row (`make got
+    exception NO_CLASS Missing`). A table grows its last column to fit its
+    notes and footer, up to the width; past that they wrap inside it. A
+    directive with no table after it gets the text after its badge.
+  - Line 0's are the file's state, at the top, each a bold line across
+    the page tinted by level: `⋯ setting up · 0:23` (a run going, its
+    clock ticking), `✓ passed · 15 of 15` green, `✗ failed · 2 of 15` red,
+    a banner red (`temoc failed: <message> (<cause>)`).
+  - Every tab starts with a red banner per broken plugin (health not ok,
+    or exited: `temoc exited (exit code 127): <its last stderr line>`),
+    and the meta line gets `🧪 error` for it. The Description starts with
+    each plugin's `summary` of the PR (`02-plugins.md`); a spec file with
+    no line-0 mark gets the summary while the plugin has nothing on any
+    file yet, else `· not run · T to run`.
+  - Elsewhere an error's or warning's text goes under its line, `✗ line 13
+    · text`.
+
+  When a plugin's `marks.ref` isn't the head the tab shows, the tab starts
+  with `temoc: results are for 86fa3ad; the PR has moved on`. Tints are
+  truecolor backgrounds, the nearest palette color elsewhere (16 colors:
+  likely none, the glyphs remain).
 - Rendering (`src/markdown.cpp`, parsed by [md4c](https://github.com/mity/md4c)
   in its GitHub dialect) is pure, text and width in, styled lines out, and
   redone when the terminal's width changes. At most 120 columns wide.
