@@ -61,14 +61,40 @@ jobs:
           persist-credentials: false
 
       # Dependencies (FTXUI, nlohmann/json) come from FetchContent: nothing to
-      # install, and the binaries need only system libraries.
+      # install, and the binaries need only system libraries. The terminal UI
+      # and its plugins build first, without the GUI, so nothing the GUI needs
+      # can stop their release.
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DANTON_VERSION=${{ needs.version.outputs.tag }}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DANTON_GUI=OFF -DANTON_VERSION=${{ needs.version.outputs.tag }}
           cmake --build build -j --target anton anton-slkx anton-llm anton-temoc
 
+      # anton-gui (Dear ImGui, GLFW; FetchContent too) needs the X11 headers
+      # on Linux. At run time it loads X11 and OpenGL itself. If it fails to
+      # build, the step shows red and the release ships without it there.
+      - name: Install the GUI's build dependencies
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorg-dev libgl1-mesa-dev
+
+      - name: Build anton-gui
+        continue-on-error: true
+        run: |
+          cmake -S . -B build-gui -DCMAKE_BUILD_TYPE=Release -DANTON_VERSION=${{ needs.version.outputs.tag }}
+          cmake --build build-gui -j --target anton-gui
+          cp build-gui/anton-gui build/
+
       - name: Package
-        run: tar -czf anton-${{ matrix.name }}.tar.gz -C build anton anton-slkx anton-llm anton-temoc
+        run: |
+          bins="anton anton-slkx anton-llm anton-temoc"
+          if [ -f build/anton-gui ]; then
+            bins="$bins anton-gui"
+          else
+            echo "::warning::anton-gui didn't build on ${{ matrix.name }}: this release ships the terminal UI only there"
+          fi
+          tar -czf anton-${{ matrix.name }}.tar.gz -C build $bins
 
       - uses: actions/upload-artifact@v4
         with:

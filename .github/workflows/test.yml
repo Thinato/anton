@@ -1,6 +1,7 @@
 name: test
 
-# Builds and runs the self-checks on every PR; required to merge. Linux only:
+# Builds everything, anton-gui included, runs the self-checks and draws
+# anton-gui's screens on the demo, on every PR; required to merge. Linux only:
 # the checks are pure logic, and the macOS build is exercised by release.yml.
 #
 # No `paths:` filter on the trigger. A workflow skipped that way never reports,
@@ -32,7 +33,7 @@ jobs:
           files=$(gh pr diff ${{ github.event.pull_request.number }} \
             --repo "$GITHUB_REPOSITORY" --name-only)
           if printf '%s\n' "$files" \
-              | grep -qE '^(src/|plugins/|tests/|CMakeLists\.txt$|\.github/workflows/)'; then
+              | grep -qE '^(src/|plugins/|tests/|cmake/|assets/|docs/demo/|CMakeLists\.txt$|\.github/workflows/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -47,6 +48,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # anton-gui's window comes from GLFW, which builds against the X11
+      # headers; xvfb and Mesa's software GL run it below with no display.
+      - name: Install the GUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xorg-dev libgl1-mesa-dev xvfb libgl1-mesa-dri
+
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -54,3 +62,23 @@ jobs:
 
       - name: Self-checks
         run: ctest --test-dir build --output-on-failure
+
+      # anton-gui on the demo (fake gh, fake plugins, no network), offscreen:
+      # it must start, load the data, draw each screen and write a PNG.
+      - name: anton-gui screenshots on the demo
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p shots
+          for screen in list reader settings palette; do
+            xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build/anton-gui ./docs/demo/run.sh \
+              --screenshot "shots/$screen.png" --screen "$screen" --pr 4812 --file specs/onboarding.md --palette-query temoc
+            test -s "shots/$screen.png"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anton-gui-screenshots-linux
+          path: shots/
+          retention-days: 7
