@@ -88,18 +88,6 @@ int Ui::control(std::function<void()> act, std::function<void(int)> adj, int row
   return static_cast<int>(controls.size()) - 1;
 }
 
-void Ui::edit_view(size_t i, const std::function<void(View&)>& fn) {
-  if (i >= tabs.size()) return;
-  fn(tabs[i].v);
-  if (tabs[i].saved) fn(*tabs[i].saved);
-  else tabs[i].saved = tabs[i].v;
-  write_config("saved");
-  if (i == active) {
-    selected = list_top = 0;
-    refresh();
-  }
-}
-
 Element Ui::render_settings() {
   auto term = Terminal::Size();
   int W = term.dimx, H = term.dimy, pane_w = W - 24;

@@ -55,6 +55,7 @@ endif()
 
 add_executable(anton
   src/main.cpp
+  src/core.cpp
   src/markdown.cpp
   src/proc.cpp
   src/github.cpp

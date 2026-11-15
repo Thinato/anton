@@ -130,123 +130,12 @@ bool Ui::note_key(const Event& e) {
 
 // -- reader ---------------------------------------------------------------------
 
-// Fetches the description off the UI thread, unless it's in for this
-// updatedAt already or on its way.
-void Ui::want_body(const std::string& url, std::time_t updated) {
-  Body& b = bodies[url];
-  if (b.loading || b.updated == updated) return;
-  b.loading = true;
-  std::thread([this, url, updated] {
-    std::string err, head, body = fetch_body(url, head, err);
-    post([this, url, updated, err, head, body] {
-      Body& b = bodies[url];
-      b.loading = false;
-      b.updated = updated;  // a failure too, or it'd retry every frame; reopening retries
-      b.error = err;
-      if (err.empty()) {
-        b.text = body;
-        b.head = head;
-      }
-    });
-  }).detach();
-}
-
-// The PR's file tabs at the head its description came with, fetched off
-// the UI thread on first ask. nullptr until the head is known.
-Ui::Files* Ui::want_files(const std::string& url) {
-  std::string head = bodies[url].head;
-  if (head.empty()) return nullptr;
-  auto key = std::make_pair(url, head);
-  auto [it, fresh] = files.try_emplace(key);
-  if (!fresh) return &it->second;
-  it->second.loading = true;
-  std::thread([this, key] {
-    std::string err;
-    std::vector<FileTab> tabs;
-    for (auto& f : fetch_md_files(key.first, key.second, err)) {
-      FileTab t{f.path, "", f.text, f.error, md::directives(f.text)};
-      t.spec = std::any_of(t.dirs.begin(), t.dirs.end(), [](const md::Directive& d) { return !d.import; });
-      tabs.push_back(std::move(t));
-    }
-    std::stable_partition(tabs.begin(), tabs.end(), [](const FileTab& t) { return t.spec; });
-    std::vector<std::string> paths;
-    for (auto& t : tabs) paths.push_back(t.path);
-    auto names = short_names(paths);
-    for (size_t i = 0; i < tabs.size(); ++i) tabs[i].name = names[i];
-    post([this, key, tabs, err] { files[key] = Files{tabs, err, false}; });
-  }).detach();
-  return &it->second;
-}
-
-const Ui::Files* Ui::reader_files() const {
-  auto b = bodies.find(reader_url);
-  if (b == bodies.end()) return nullptr;
-  auto f = files.find({reader_url, b->second.head});
-  return f == files.end() ? nullptr : &f->second;
-}
-
-const Ui::FileTab* Ui::reader_tab_file() const {
-  const Files* fs = reader_files();
-  return fs && reader_tab > 0 && reader_tab <= fs->tabs.size() ? &fs->tabs[reader_tab - 1] : nullptr;
-}
-
-std::optional<Ui::PluginKey> Ui::line_key() const {
-  for (auto& k : plugin_keys())
-    if (k.action.line) return k;
-  return std::nullopt;
-}
-
-// Runs a test table (its directive's line) or row of a file through the
-// first plugin action that takes a line.
-void Ui::run_line(const std::string& file, int line) {
-  if (auto k = line_key()) plugin_action(k->action.key, reader_url, file, line);
-  else flash("no plugin runs test tables (02-plugins.md, \"line\" actions)");
-}
-
 void Ui::reader_jump(const std::string& path, int src) {
   for (size_t i = 0; i < reader_md.lines.size(); ++i)
     if (reader_md.lines[i].src >= src && reader_md.lines[i].src > 0) {
       reader_scroll[path] = static_cast<int>(i);
       return;
     }
-}
-
-std::string Ui::plugin_problem(size_t i) const {
-  const PluginState& st = live[i];
-  const std::string& name = cfg.plugins[i].name;
-  if (st.health == "error") return name + ": " + (st.health_text.empty() ? "error" : st.health_text);
-  if (st.health == "exited")
-    return name + " exited (" + st.health_text + ")" + (st.last_stderr.empty() ? "" : ": " + st.last_stderr);
-  return "";
-}
-
-// A broken plugin can't say anything about a file, so anton says it, on
-// every tab. The description gets each plugin's summary of the PR; a spec
-// file a plugin's summary while that plugin has nothing on any file of the
-// PR yet (a run checking out), else `not run · T to run` when nothing has
-// a line-0 mark on it.
-std::vector<Mark> Ui::reader_top(const std::string& path, bool spec, const std::vector<Mark>& marks) const {
-  std::vector<Mark> out;
-  std::vector<bool> broken(live.size());
-  for (size_t i = 0; i < live.size(); ++i)
-    if (std::string p = plugin_problem(i); !p.empty()) {
-      broken[i] = true;
-      out.push_back({path, 0, "error", "!", p, true});
-    }
-  if (!path.empty() && !spec) return out;
-  bool stated = std::any_of(marks.begin(), marks.end(), [](const Mark& m) { return m.line == 0; });
-  for (size_t i = 0; i < live.size(); ++i) {
-    auto it = live[i].prs.find(reader_url);
-    if (broken[i] || it == live[i].prs.end() || !it->second.marks_summary) continue;
-    if (!path.empty() && !it->second.marks.empty()) continue;
-    Mark m = *it->second.marks_summary;
-    m.file = path, m.banner = m.banner || m.level == "error";
-    out.push_back(m);
-    stated = true;
-  }
-  if (!path.empty() && !stated && out.empty())
-    if (auto k = line_key()) out.push_back({path, 0, "dim", "·", "not run · " + k->action.key + " to run"});
-  return out;
 }
 
 // The file's test tables in order; by +1/-1 from the focused one, stopping
@@ -264,35 +153,11 @@ void Ui::focus_table(int by) {
   reader_jump(ft->path, f);
 }
 
-// Every plugin's marks on one file of a PR (or one plugin's), and, in
-// stale, a line for each plugin whose marks are about another commit.
-std::vector<Mark> Ui::marks_on(const std::string& url, const std::string& path, const std::string& head,
-                               std::vector<std::string>* stale, int only_plugin) const {
-  std::vector<Mark> out;
-  for (size_t i = 0; i < live.size(); ++i) {
-    if (only_plugin >= 0 && static_cast<int>(i) != only_plugin) continue;
-    auto it = live[i].prs.find(url);
-    if (it == live[i].prs.end()) continue;
-    size_t before = out.size();
-    for (auto& m : it->second.marks)
-      if (m.file == path) out.push_back(m);
-    const std::string& ref = it->second.marks_ref;
-    if (stale && out.size() > before && !ref.empty() && !head.starts_with(ref))  // a short sha is fine
-      stale->push_back(cfg.plugins[i].name + ": results are for " + ref.substr(0, 7) + "; the PR has moved on");
-  }
-  return out;
-}
-
 void Ui::open_reader(const Pr& p) {
-  reader_url = p.url;
-  reader_tab = 0;
+  prepare_reader(p);
   reader_scroll.clear();
   mode = Mode::Reader;
   close_menus();
-  Body& b = bodies[p.url];
-  if (!b.error.empty()) b.updated = -1;
-  if (auto f = files.find({p.url, b.head}); f != files.end() && !f->second.loading && !f->second.error.empty())
-    files.erase(f);  // reopening retries
 }
 
 int Ui::reader_rows() const { return std::max(1, Terminal::Size().dimy - 6); }  // header 4, footer 2

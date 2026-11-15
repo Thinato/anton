@@ -1,7 +1,8 @@
 #pragma once
-// The UI's state and the pieces its three files share: ui.cpp (fetching,
-// plugins, the PR list, menus, the palette), ui_reader.cpp (the reader and
-// the note overlay), ui_settings.cpp (settings, $EDITOR). Everything here
+// The terminal UI's state and the pieces its three files share: ui.cpp (the
+// PR list, menus, the palette, mouse dispatch), ui_reader.cpp (the reader
+// and the note overlay), ui_settings.cpp (settings, $EDITOR). The data and
+// logic it shares with anton-gui are in Core (core.hpp). Everything here
 // runs on the UI thread unless it says otherwise.
 
 #include <chrono>
@@ -23,6 +24,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include "config.hpp"
+#include "core.hpp"
 #include "filters.hpp"
 #include "markdown.hpp"
 #include "model.hpp"
@@ -135,33 +137,8 @@ struct Hit {
 
 enum class Mode { Normal, Query, Note, Reader, Settings };
 
-struct Ui {
-  Config cfg;  // as saved: what config.json says, plus what anton wrote to it
+struct Ui : Core {
   ftxui::App screen = ftxui::App::Fullscreen();
-
-  // -- views: the tabs ---------------------------------------------------------
-  // A tab is its view as it is now and as last saved (none: never saved).
-  // They differ once you change its filters: a yellow • until saved/reverted.
-  struct Tab {
-    View v;
-    std::optional<View> saved;
-  };
-  std::vector<Tab> tabs;
-  std::vector<View> offscreen;  // config views not on screen (--query); kept on save
-  size_t active = 0;
-  std::string scope;  // "org:x" / "repo:o/n" / "": every view, kept when switching
-
-  // -- data --------------------------------------------------------------------
-  std::map<std::string, Pr> cache;                          // by URL
-  std::map<std::string, std::vector<std::string>> results;  // search query -> URLs
-  std::set<std::string> requested;                          // URLs ever asked for
-  std::set<std::string> owners, repos;                      // every one seen: picker source
-  std::string viewer;
-  std::time_t last_fetch = 0, last_refresh = 0, last_watch = 0, last_update_check = 0;
-  std::string update_note;  // stays in the footer once set
-  std::string error, notice;
-  std::time_t notice_until = 0;
-  bool notice_bad = false;  // a failed save: red
 
   // -- screen state --------------------------------------------------------------
   Mode mode = Mode::Normal;
@@ -180,33 +157,13 @@ struct Ui {
   int note_scroll = 0;
 
   // -- reader --------------------------------------------------------------------
-  std::string reader_url;  // the PR whose description the Reader shows
-  size_t reader_tab = 0;   // 0: the description, then the PR's files in tab order
   std::map<std::string, int> reader_scroll;  // per tab: by path, "" for the description
-  struct Body {  // fetched when the reader opens it and when updatedAt moves
-    std::string text, head, error;
-    std::time_t updated = -1;
-    bool loading = false;
-  };
-  std::map<std::string, Body> bodies;  // by URL
-  struct FileTab {
-    std::string path, name, text, error;
-    std::vector<md::Directive> dirs;
-    bool spec = false;  // has a decisionTable directive
-  };
-  struct Files {  // the PR's markdown files at its head; specs first
-    std::vector<FileTab> tabs;
-    std::string error;
-    bool loading = false;
-  };
-  std::map<std::pair<std::string, std::string>, Files> files;
   struct Rendered {  // markdown for one width; redone when text or width change
     std::string key;
     int width = -1;
     std::vector<md::Line> lines;
   };
   Rendered reader_md, note_md;
-  std::map<size_t, std::string> last_glyph;  // per plugin: its last tag's glyph (🧪), for "🧪 error" once it's down
   int reader_hover = -1;                    // the display line of a test row under the mouse: its ▶ shows
   std::map<std::string, int> reader_focus;  // per file: the focused test table's directive line (J/K, r)
 
@@ -221,22 +178,6 @@ struct Ui {
   };
   std::vector<Control> controls;  // the page's, in focus order, rebuilt every frame
 
-  // -- plugins -------------------------------------------------------------------
-  std::vector<PluginState> live, pending;  // one-shot plugins fold into pending until they end
-  std::vector<bool> running;
-  std::vector<int> last_code;
-  std::unique_ptr<Plugins> plugins;
-
-  // -- fetch worker queue (mu) -----------------------------------------------------
-  std::mutex mu;
-  std::condition_variable cv;
-  std::deque<std::string> searches;
-  std::set<std::string> want_urls;  // state first, full fields if open
-  std::set<std::string> want_full;  // full fields regardless (stubs a view shows)
-  bool busy = false;
-  std::set<std::string> requested_full;          // UI thread
-  std::vector<std::set<std::string>> approvals;  // per plugin: new approvals not yet delivered
-
   // -- command columns ---------------------------------------------------------------
   struct ColumnCell {
     std::string text, error;
@@ -246,78 +187,23 @@ struct Ui {
   };
   static constexpr int kColumnJobs = 4;
   std::map<std::pair<std::string, std::string>, ColumnCell> column_cells;  // (column name, URL)
-  int column_gen = 0;
   bool column_workers = false;
   std::mutex col_mu;
   std::condition_variable col_cv;
   std::deque<std::function<void()>> col_jobs;
 
   explicit Ui(Config c);
-  void post(std::function<void()> fn);  // runs fn on the UI thread; any thread
+  void post(std::function<void()> fn) override;
+  void reset_selection() override { selected = list_top = 0; }
 
-  // ui.cpp: data
-  std::string effective(const View& v) const;
-  void request_search(const std::string& q);
-  void request_urls(const std::vector<std::string>& urls);
-  void request_full(const std::vector<std::string>& urls);
-  void poll_watched();
-  bool loading();
-  void worker();
-  std::vector<std::string> list_urls(const View& v) const;
-  void refresh();
-  std::optional<std::vector<Pr>> rows(size_t vi, std::string* err = nullptr) const;
-  std::vector<std::string> stubs_to_fill() const;
-  Seen seen() const;
-  std::vector<std::string> plugin_lists(const std::string& plugin) const;
-
-  // ui.cpp: plugins
-  int plugin_index(const std::string& name) const;
-  bool one_shot(size_t i) const { return cfg.plugins[i].rerun != "exit"; }
-  void on_plugin_line(size_t i, const std::string& line, bool is_err);
-  void on_plugin_exit(size_t i, int code);
-  void notify_approved();
-  // file (and line) go along when the action takes them ("line": true).
-  bool plugin_action(const std::string& key, const std::string& url, const std::string& file = "", int line = 0);
-  bool plugin_up(size_t i) const;
-  std::optional<Status> status_of(const std::string& url) const;
-  std::vector<Tag> tags_of(const std::string& url) const;
-  std::vector<std::pair<std::string, std::string>> notes_of(const std::string& url) const;
-  bool has_note(const std::string& url) const;
-  struct PluginKey {  // a plugin's action, for buttons and the palette
-    size_t plugin;
-    Action action;
-  };
-  std::vector<PluginKey> plugin_keys() const;
-
-  // ui.cpp: people, titles
-  std::string shown_title(const std::string& t) const;
-  const Person* person(const std::string& login) const;
-  const Person* tag_person(const Tag& t) const;
+  // ui.cpp: people
   static ftxui::Element paint(ftxui::Element e, const Person* p);
   static ftxui::Element fit(const std::vector<Part>& parts, int w);
-  std::string who(const std::string& login) const;
 
-  // ui.cpp: views
-  View& view() { return tabs[active].v; }
-  bool modified(size_t i) const;
-  void apply_query(const std::string& q);  // the active view's filter becomes q
-  void set_sort(Sort s);
-  std::vector<View> saved_views() const;
-  bool write_config(const std::string& done = "");  // flashes the error; false on one
+  // ui.cpp: views that ask first
   void save_view(size_t i, bool named = false);  // named: skip asking a never-saved view its name
-  void save_as_new(size_t i, const std::string& name);
   void save_as_prompt(size_t i);
-  void revert_view(size_t i);
   void new_view();
-  void duplicate_view(size_t i);
-  void move_view(size_t i, int by);
-  void delete_view(size_t i);
-  std::string rename_view(size_t i, const std::string& name);
-  void switch_view(size_t i);
-  void open(const std::string& url);
-  void copy(const std::string& s);
-  void flash(const std::string& s, int secs = 3, bool bad = false);
-  void check_update();
 
   // ui.cpp: hits and menus
   Hit& hit(ftxui::Element& e);
@@ -370,22 +256,10 @@ struct Ui {
   void act(const std::string& key, const Pr* cur);  // a list key, from a key press or a button
 
   // ui_reader.cpp
-  void want_body(const std::string& url, std::time_t updated);
-  Files* want_files(const std::string& url);
-  const Files* reader_files() const;
-  std::vector<Mark> marks_on(const std::string& url, const std::string& path, const std::string& head,
-                             std::vector<std::string>* stale = nullptr, int only_plugin = -1) const;
   void open_reader(const Pr& p);
   int reader_rows() const;
-  const FileTab* reader_tab_file() const;  // the open file tab, nullptr on the description
-  std::optional<PluginKey> line_key() const;  // the first action that runs a file's line: ▶, r
-  void run_line(const std::string& file, int line);
   void reader_jump(const std::string& path, int src);  // scrolls the tab to source line src
   void focus_table(int by);  // J/K: the next or previous test table
-  std::string plugin_problem(size_t i) const;  // "" or why plugin i is broken: health error, exited
-  // Line-0 marks atop a tab ("" path: the description): broken plugins,
-  // summaries, `not run · T to run`.
-  std::vector<Mark> reader_top(const std::string& path, bool spec, const std::vector<Mark>& marks) const;
   ftxui::Element render_reader();
   ftxui::Element render_note();
   bool reader_key(const ftxui::Event& e);
@@ -396,7 +270,6 @@ struct Ui {
   ftxui::Element render_settings();
   bool settings_key(const ftxui::Event& e);
   int control(std::function<void()> act, std::function<void(int)> adj, int row);
-  void edit_view(size_t i, const std::function<void(View&)>& fn);  // as it is and as saved; writes
   void edit_config();
   void apply_config(Config c);
 };
@@ -404,8 +277,6 @@ struct Ui {
 // Markdown spans and lines as elements (ui_reader.cpp), and a page of them.
 ftxui::Element md_line(const md::Line& l);
 bool scroll_key(const ftxui::Event& e, int& scroll, int rows);
-std::string today();
-std::time_t now();
 bool fuzzy(const std::string& hay, const std::string& needle);
 
 }  // namespace anton
