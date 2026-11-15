@@ -75,7 +75,7 @@ jobs:
             args="--screenshot shots/$screen.png --screen $screen --pr 4812 --file specs/onboarding.md --palette-query temoc"
             xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build/anton-gui ./docs/demo/run.sh $args || {
               # it crashed: the same run again under AddressSanitizer, for where and why
-              cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
                 -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address
               cmake --build build-asan -j --target anton-gui
               sudo apt-get install -y --no-install-recommends llvm  # llvm-symbolizer: inlined frames too
