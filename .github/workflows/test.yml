@@ -78,7 +78,9 @@ jobs:
               cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address
               cmake --build build-asan -j --target anton-gui
-              xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build-asan/anton-gui ./docs/demo/run.sh $args
+              sudo apt-get install -y --no-install-recommends llvm  # llvm-symbolizer: inlined frames too
+              xvfb-run -a -s "-screen 0 1600x1000x24" env ANTON=build-asan/anton-gui \
+                ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer ./docs/demo/run.sh $args
               exit 1
             }
             test -s "shots/$screen.png"
