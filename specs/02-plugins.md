@@ -80,32 +80,52 @@ last line is shown in Settings › General › Plugins for debugging.
 the row of a spec table, a linter's finding on a line of code.
 
 ```json
-"marks": {"ref": "f9ec85333a272433d5440a4567602e3fd0e1fd2d", "lines": [
-  {"file": "specs/a.md", "line": 12, "level": "error", "glyph": "✗", "text": "sum: expected 5, got 4"},
-  {"file": "specs/a.md", "line": 7,  "level": "warn",  "glyph": "💤", "text": "snoozed until 2026-12-01"},
-  {"file": "specs/a.md", "line": 0,  "level": "ok",    "glyph": "✓", "text": "11 passed"}]}
+"marks": {"ref": "f9ec85333a272433d5440a4567602e3fd0e1fd2d",
+          "command": "temoc -c temoc.toml --output jsonl -- specs/a.md", "lines": [
+  {"file": "specs/a.md", "line": 0,  "level": "error", "glyph": "!", "text": "temoc failed: server_died", "banner": true},
+  {"file": "specs/a.md", "line": 0,  "level": "error", "glyph": "✗", "text": "failed · 1 of 12"},
+  {"file": "specs/a.md", "line": 8,  "level": "error", "glyph": "✗", "text": "failed · 1 of 4\nmake got exception NO_CLASS X"},
+  {"file": "specs/a.md", "line": 12, "level": "error", "glyph": "✗", "text": "mul expected 5, got 4\nsum expected 1, got 2"},
+  {"file": "specs/a.md", "line": 13, "level": "warn",  "glyph": "~", "text": "mul expected 5, got 4 (snoozed until 2026-12-01)"},
+  {"file": "specs/a.md", "line": 14, "level": "ok",    "glyph": "✓", "text": ""}]}
 ```
 
 | field | |
 | --- | --- |
 | `ref` | the commit the marks are about, normally the PR's head when the plugin looked. A viewer of another commit knows they may be off. |
+| `command` | optional: the command that made them, as the plugin wants it shown (the reader's `LAST COMMAND`). |
 | `file` | path in the repo, as in the PR's diff. |
 | `line` | 1-based line of `file` at `ref`; `0` is the file as a whole. A line can have several marks. |
-| `level` | `ok`, `error`, `warn` or `dim` (didn't run, not relevant): how to color it. Anything else reads as `dim`. |
-| `glyph`, `text` | what to show next to the line; both may be empty. |
+| `level` | `ok`, `error`, `warn` or `dim` (didn't run, running, not relevant): how to color it. Anything else reads as `dim`. |
+| `glyph`, `text` | what to show next to the line; both may be empty. `text` may hold several lines (`\n`), each shown on its own row. |
+| `banner` | optional `true`, on line 0 only: the mark is a banner across the top of the file, for something that kept the plugin from looking at the file at all (temoc couldn't run it). |
 
 A mark without a `file`, or whose `line` isn't a whole number from 0 up,
 is skipped; the rest of the line still counts.
 
 The reader (`01-anton.md`) shows a markdown file's marks on its tab, from
 every plugin: the glyph in a gutter left of the line, colored by level (the
-worst level when a line has several), an `error` or `warn` mark's text
-under the line (under the table for a table row), a directive line's after
-temoc's badge, line 0's at the top. `ok` and `dim` marks on rows are only
-their glyph. A mark on a line that shows nothing (a blank line, the middle
-of a paragraph) goes on the nearest shown line above it. When `ref` isn't
-the head the tab shows, the tab says the results are for that commit. The
-tab's name counts the marks on rows by glyph: `✓ 10 ✗ 1 💤 1`.
+worst level when a line has several). Where the text goes depends on the
+line:
+
+- **a table row**: the row is tinted by its worst mark (`ok` green, `error`
+  red, `warn` yellow, `dim` not at all), and an `error` or `warn` mark's
+  text goes under the row, inside the table, a line each, indented.
+- **a temoc directive** (its badge): the mark is its table's result, a
+  footer inside the table's border: the glyph and the text's first line
+  (`✗ failed · 1 of 4`), then the text's other lines under it (failures
+  that belong to the table, not a row). Up to ` · ` the first line is the
+  short form the outline shows (`failed`).
+- **line 0**: at the top of the file; a `banner` is a tinted line across the
+  page. The worst non-banner one is the file's result in the outline.
+- **anything else**: an `error` or `warn` mark's text under the line, as
+  `✗ line 13 · text`.
+
+`ok` and `dim` marks on rows are only their glyph and tint. A mark on a
+line that shows nothing (a blank line, the middle of a paragraph) goes on
+the nearest shown line above it. When `ref` isn't the head the tab shows,
+the tab says the results are for that commit. The tab's name counts the
+marks on rows by glyph: `✓ 10 ✗ 1 ~ 1`.
 
 **State, not deltas.** Every `pr` line is the *complete* truth for
 (plugin, PR) and replaces the previous one; an omitted field means "none"
@@ -148,7 +168,8 @@ without breaking old anton builds.
 ### `actions` — keys the plugin handles (optional)
 
 ```json
-{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"}]}
+{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"},
+             {"id": "run", "key": "T", "label": "run the PR's temoc specs", "button": "Run specs", "line": true}]}
 ```
 
 Each `key` (one character) becomes a key on the selected PR, and in the
@@ -160,6 +181,13 @@ text for it, else the `label` is. The palette (`?`) lists them as
 `<label> · <plugin>`. The latest `actions` line replaces the previous one;
 actions vanish while the plugin is down. anton's own keys win a clash.
 
+An action with `"line": true` also works on part of a PR: a file, or a
+line of one (a temoc table's directive, or a row). In the reader, its key
+on a spec file's tab sends that `file` (`T Run file`), and the ▶ on a test
+table's header or a hovered row, and `r` on the focused table, send the
+`file` and `line` (`01-anton.md`, Reader). The first such action is the
+one ▶ and `r` use.
+
 ## Protocol: anton → plugin (stdin)
 
 Long-running (`"rerun": "exit"`) plugins get a stdin pipe; one-shot plugins
@@ -168,6 +196,8 @@ keep `/dev/null`. One JSON object per line:
 | line | when |
 | --- | --- |
 | `{"action": id, "pr": url}` | you pressed a key the plugin declared |
+| `{"action": id, "pr": url, "file": path}` | ...on a file, for an action with `"line": true`: `path` as in the PR's diff |
+| `{"action": id, "pr": url, "file": path, "line": n}` | ...on line `n` (1-based) of it: a table's directive line or a row's |
 | `{"event": "approved", "pr": url}` | anton saw a **new** approval by you: a fetch shows your latest review APPROVED with a different `submittedAt` than the last fetch of that PR. Sent once, when the plugin is at `health: ok` (queued until then). Never replayed on restart, so an old approval can't undo a re-review; approvals made while anton was closed are not sent. |
 
 A plugin that doesn't care never reads stdin: anton's writes are
@@ -187,9 +217,11 @@ re-sends the PR's `pr` line. anton never updates plugin state on its own.
   `glyph text`, joined by space; overflow becomes `+N` → `👀 alice +1`.
 - **Detail** under the list (third line): per plugin, its name, status and
   tags (`glyph text hint`), then `n read note` if a plugin attached one.
-- **Reader** (`⏎`): marks on the tab of their file, above; on a wide
-  terminal the outline has a block per plugin with marks on the file: its
-  counts, the commit they're for, and its action buttons.
+- **Reader** (`⏎`): marks on the tab of their file, above. On a wide
+  terminal the outline of a spec file shows its result, its tables'
+  results, what did not pass and the marks' `command`; of any other file, a
+  block per plugin with marks on it: its counts, the commit they're for,
+  and its action buttons.
 - **Note overlay** (`n`): every plugin's note on the selected PR, headed
   `[plugin]` when there's more than one. `j`/`k`, `space`/PgUp/PgDn, `g`/`G`
   scroll; `y` copies the text; `esc`, `q` or `n` closes.

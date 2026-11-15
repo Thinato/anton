@@ -152,10 +152,19 @@ int main() {
     auto& ms = st.prs[url].marks;
     assert(ms.size() == 3);
     assert(ms[0].file == "s/a.md" && ms[0].line == 13 && ms[0].level == "error" && ms[0].glyph == "✗");
-    assert(ms[0].text == "sum: expected 5, got 4");  // one row: newline to space, no escape
-    assert(ms[1].line == 0 && ms[1].level == "ok");
+    assert(ms[0].text == "sum: expected 5,\ngot 4");  // lines kept, no escape
+    assert(ms[1].line == 0 && ms[1].level == "ok" && !ms[1].banner);
     assert(ms[2].level == "dim" && ms[2].glyph.empty() && ms[2].text.empty());  // unknown level reads dim
   }
+  // a banner (line 0 only) and the command that made the marks
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"r","command":"temoc -c t.toml\n-- a.md","lines":[)"
+                 R"({"file":"a.md","line":0,"level":"error","text":"temoc failed: x","banner":true},)"
+                 R"({"file":"a.md","line":3,"level":"error","banner":true}]}})");
+  assert(st.prs[url].marks_command == "temoc -c t.toml -- a.md");
+  assert(st.prs[url].marks[0].banner && !st.prs[url].marks[1].banner);
+  // an action that takes a file and line
+  apply_line(st, R"({"actions":[{"id":"run","key":"T","line":true},{"id":"x","key":"x","line":"yes"}]})");
+  assert(st.actions.size() == 2 && st.actions[0].line && !st.actions[1].line);
   apply_line(st, R"({"pr":"o/r#1","marks":"junk","tags":[{"text":"t"}]})");
   assert(st.prs[url].marks.empty() && st.prs[url].marks_ref.empty());  // junk marks are none
   apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"abc","lines":[{"file":"a.md","line":1,"level":"ok"}]}})");

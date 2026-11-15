@@ -35,7 +35,9 @@ namespace anton {
 // The design's colors. Truecolor terminals get them as is; others get the
 // ANSI color each stands in for (foregrounds) or FTXUI's nearest palette
 // color (backgrounds), and the selected row is inverted instead.
-enum class Pal { Fg, Dim, Faint, Cyan, Green, Yellow, Red, Magenta, Accent, Ink, Sel, Chip, ChipOn, Btn, Menu, MenuSel, Border };
+// Note is a mark's note (a quieter red); the Tints are row results' backgrounds.
+enum class Pal { Fg, Dim, Faint, Cyan, Green, Yellow, Red, Magenta, Accent, Ink, Sel, Chip, ChipOn, Btn, Menu, MenuSel, Border,
+                 Note, TintOk, TintErr, TintWarn };
 
 inline bool truecolor() {
   static const bool t = ftxui::Terminal::ColorSupport() == ftxui::Terminal::TrueColor;
@@ -54,9 +56,10 @@ inline ftxui::Color pal(Pal p) {
       {0xf2777a, Color::Red},     {0xc49bef, Color::Magenta},   {0x7aa7ff, Color::Blue},
       {0x0d1016, Color::Black},   {0x1c2638, Color::Default},   {0x1f2533, Color::Default},
       {0x12323b, Color::Default}, {0x232b3a, Color::Default},   {0x171c28, Color::Default},
-      {0x25324a, Color::Default}, {0x4a5366, Color::GrayDark}};
+      {0x25324a, Color::Default}, {0x4a5366, Color::GrayDark},  {0xc08a8c, Color::Red},
+      {0x17291d, Color::Default}, {0x3a2225, Color::Default},   {0x332e19, Color::Default}};
   const Entry& e = table[static_cast<int>(p)];
-  bool background = p >= Pal::Sel && p <= Pal::MenuSel;
+  bool background = (p >= Pal::Sel && p <= Pal::MenuSel) || p >= Pal::TintOk;
   if (truecolor() || background) return Color::RGB(e.hex >> 16, (e.hex >> 8) & 0xff, e.hex & 0xff);
   return e.ansi;
 }
@@ -203,6 +206,8 @@ struct Ui {
     std::vector<md::Line> lines;
   };
   Rendered reader_md, note_md;
+  int reader_hover = -1;                    // the display line of a test row under the mouse: its ▶ shows
+  std::map<std::string, int> reader_focus;  // per file: the focused test table's directive line (J/K, r)
 
   // -- settings ------------------------------------------------------------------
   int set_page = 0, set_focus = 0, set_scroll = 0;
@@ -270,7 +275,8 @@ struct Ui {
   void on_plugin_line(size_t i, const std::string& line, bool is_err);
   void on_plugin_exit(size_t i, int code);
   void notify_approved();
-  bool plugin_action(const std::string& key, const std::string& url);
+  // file (and line) go along when the action takes them ("line": true).
+  bool plugin_action(const std::string& key, const std::string& url, const std::string& file = "", int line = 0);
   bool plugin_up(size_t i) const;
   std::optional<Status> status_of(const std::string& url) const;
   std::vector<Tag> tags_of(const std::string& url) const;
@@ -370,6 +376,11 @@ struct Ui {
                              std::vector<std::string>* stale = nullptr, int only_plugin = -1) const;
   void open_reader(const Pr& p);
   int reader_rows() const;
+  const FileTab* reader_tab_file() const;  // the open file tab, nullptr on the description
+  std::optional<PluginKey> line_key() const;  // the first action that runs a file's line: ▶, r
+  void run_line(const std::string& file, int line);
+  void reader_jump(const std::string& path, int src);  // scrolls the tab to source line src
+  void focus_table(int by);  // J/K: the next or previous test table
   ftxui::Element render_reader();
   ftxui::Element render_note();
   bool reader_key(const ftxui::Event& e);

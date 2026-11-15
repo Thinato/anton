@@ -340,7 +340,8 @@ struct Mark {
   std::string file;
   int line = 0;       // 1-based; 0 is the file as a whole
   std::string level;  // ok | error | warn | dim
-  std::string glyph, text;
+  std::string glyph, text;  // text: one line or several
+  bool banner = false;      // line 0: a banner atop the file
 };
 
 struct PrInfo {
@@ -351,13 +352,16 @@ struct PrInfo {
   bool watch = false;            // re-fetch every watch_seconds (e.g. you're reviewing it)
   std::string note;              // longer text `n` opens, e.g. an LLM's review
   std::string marks_ref;         // the commit the marks are about
+  std::string marks_command;     // the command that made them, as the plugin shows it
   std::vector<Mark> marks;
 };
 
 // A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
 // button: a short label for its button ("Run specs"); the label otherwise.
+// line: it also takes "file" and "line" (the reader's ▶ on a test table or row).
 struct Action {
   std::string id, key, label, button;
+  bool line = false;
 };
 
 struct PluginState {
@@ -436,7 +440,8 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
     st.actions.clear();
     for (auto& a : *it)  // one-character keys only: anton's own keys win
       if (a.is_object() && !str(a, "id").empty() && str(a, "key").size() == 1)
-        st.actions.push_back({str(a, "id"), str(a, "key"), str(a, "label"), str(a, "button")});
+        st.actions.push_back({str(a, "id"), str(a, "key"), str(a, "label"), str(a, "button"),
+                              a.value("line", nlohmann::json(false)) == true});
   }
   if (!j.contains("pr")) return "";
   std::string url = normalize_url(str(j, "pr"));
@@ -464,6 +469,7 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
       return s;
     };
     info.marks_ref = one_line(str(*it, "ref"));
+    info.marks_command = one_line(str(*it, "command"));
     if (auto ls = it->find("lines"); ls != it->end() && ls->is_array())
       for (auto& m : *ls) {
         if (!m.is_object() || str(m, "file").empty()) continue;
@@ -472,8 +478,9 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
           continue;
         std::string level = str(m, "level");
         if (level != "ok" && level != "error" && level != "warn") level = "dim";
-        info.marks.push_back({str(m, "file"), static_cast<int>(l->get<long long>()), level,
-                              one_line(str(m, "glyph")), one_line(str(m, "text"))});
+        int line = static_cast<int>(l->get<long long>());
+        info.marks.push_back({str(m, "file"), line, level, one_line(str(m, "glyph")), printable(str(m, "text")),
+                              line == 0 && m.value("banner", nlohmann::json(false)) == true});
       }
   }
   if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty() &&

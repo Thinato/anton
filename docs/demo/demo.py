@@ -241,6 +241,24 @@ The checklist hides what the steps skip:
 | ---- | ------------------------------------- |
 | Solo | profile, billing, first project       |
 | Team | profile, billing, team, first project |
+
+## Invites
+
+[//]: # "decisionTable InvitesFixture"
+
+| plan | seats | invite? |
+| ---- | ----- | ------- |
+| Team | 5     | sent    |
+| Solo | 1     | hidden  |
+""",
+        "specs/billing.md": """# Billing step
+
+[//]: # "decisionTable PriceFixture"
+
+| plan | seats | price? |
+| ---- | ----- | ------ |
+| Solo | 1     | 9      |
+| Team | 5     | 45     |
 """,
         "docs/onboarding.md": """# Onboarding
 
@@ -377,43 +395,139 @@ def plugin():
 
 
 def temoc():
-    """What anton-temoc says after `T` on 4812: one failure, a snoozed table,
-    an error, and the rest passing. Stays up and offers `T`, like the real
-    one; pressing it says the same again."""
-    spec = "specs/onboarding.md"
-    at = lambda start: spec_line(4812, spec, start)
-    def mark(line, level, glyph, text=""):
-        return {"file": spec, "line": line, "level": level, "glyph": glyph, "text": text}
-    ok, bad = ("ok", "✓"), ("error", "✗")
-    marks = [
-        mark(0, *bad, "failed: 1 error, 1 failed, 5 passed, 1 snoozed"),
-        mark(at('[//]: # "decisionTable StepsFixture'), *bad, "1 failed, 3 passed"),
-        mark(at("| Solo       |"), *ok),
-        mark(at("| Solo trial |"), *bad, "teamStep: expected skipped, got shown"),
-        mark(at("| Team       |"), *ok),
-        mark(at("| Enterprise |"), *ok),
-        mark(at('[//]: # "decisionTable UpgradeFixture'), "warn", "💤", "1 snoozed, 1 passed"),
-        mark(at("| Solo | Team | billing"), "warn", "💤",
-             "snoozed until 2026-12-15: teamStep: expected shown, got skipped"),
-        mark(at("| Solo | Team | profile"), *ok),
-        mark(at('[//]: # "decisionTable ChecklistFixture'), *bad, "1 error, 1 passed"),
-        mark(at("| Solo | profile"), *ok),
-        mark(at("| Team | profile"), *bad, "items: NullPointerException: plan.seats is null"),
-    ]
-    line = json.dumps({
-        "pr": "https://github.com/acme/core/pull/4812",
-        "tags": [{"glyph": "🧪", "text": "2 ✗ 5 ✓ 💤 1", "hint": "temoc at 3f9c2a1: 1 error, 1 failed, 5 passed"}],
-        "note": f"temoc at `3f9c2a1`: 1 error, 1 failed, 5 passed, 1 snoozed\n\n**{spec}**: failed\n"
-                f"- `{spec}:{at('| Solo trial |')}` teamStep: expected skipped, got shown\n"
-                f"- `{spec}:{at('| Team | profile')}` items: NullPointerException: plan.seats is null\n",
-        "marks": {"ref": HEAD, "lines": marks},
-    }, ensure_ascii=False)
-    print(line, flush=True)
+    """What anton-temoc says about 4812: in onboarding.md a failed row, a
+    snoozed table, an error, a fixture that doesn't exist and the rest
+    passing; billing.md never ran (its hooks failed: a banner). Stays up and
+    offers `T`, like the real one: a run (the PR, a file, a table or a row)
+    clears what it's about to run and fills it in a row at a time."""
+    url = "https://github.com/acme/core/pull/4812"
+    spec, bill = "specs/onboarding.md", "specs/billing.md"
+    at = lambda f, start: spec_line(4812, f, start)
+    words = {"passed": "✓", "failed": "✗", "error": "!", "snoozed": "~", "skipped": "-", "partial": "·", "running": "⋯"}
+    worse = ["passed", "skipped", "snoozed", "partial", "failed", "error", "running"]
+    level = lambda s: {"passed": "ok", "failed": "error", "error": "error", "snoozed": "warn"}.get(s, "dim")
+
+    def table(f, directive, rows, own=None):
+        return {"line": at(f, directive), "rows": [at(f, r) for r in rows], "own": own}
+    tables = {
+        spec: [table(spec, '[//]: # "decisionTable StepsFixture',
+                     ["| Solo       |", "| Solo trial |", "| Team       |", "| Enterprise |"]),
+               table(spec, '[//]: # "decisionTable UpgradeFixture', ["| Solo | Team | billing", "| Solo | Team | profile"]),
+               table(spec, '[//]: # "decisionTable ChecklistFixture', ["| Solo | profile", "| Team | profile"]),
+               table(spec, '[//]: # "decisionTable InvitesFixture', ["| Team | 5 ", "| Solo | 1 "],
+                     own="make got exception NO_CLASS InvitesFixture")],
+        bill: [table(bill, '[//]: # "decisionTable PriceFixture', ["| Solo | 1 ", "| Team | 5 "])],
+    }
+    banner = {bill: "make got exception COULD_NOT_INVOKE_CONSTRUCTOR BillingHooks[0] (NO_CLASS BillingHooks)"}
+    final = {at(spec, "| Solo trial |"): ("failed", ["teamStep expected skipped, got shown"]),
+             at(spec, "| Solo | Team | billing"): ("snoozed", ["teamStep expected shown, got skipped (snoozed until 2026-12-15)"]),
+             at(spec, "| Team | profile"): ("error", ["items expected profile, billing, team, first project, "
+                                                       "got exception NullPointerException: plan.seats is null"])}
+    for t in tables[spec][3]["rows"] + tables[bill][0]["rows"]:
+        final[t] = ("skipped", [])
+    # what's known: per file, rows by line, tables' own failures shown, banner, running table
+    state = {f: {"rows": {}, "own": set(), "banner": None, "running": None} for f in tables}
+    command = ["temoc -c Config.toml --output jsonl --"]
+
+    def table_status(f, t):
+        st = state[f]
+        if st["running"] == t["line"]:
+            return "running"
+        got = [st["rows"].get(r, ("partial",))[0] for r in t["rows"]] + (["error"] if t["line"] in st["own"] else [])
+        if all(r not in st["rows"] for r in t["rows"]) and t["line"] not in st["own"]:
+            return None
+        return max(got, key=worse.index)
+
+    def counted(s, rows, f):
+        bad = lambda r: state[f]["rows"].get(r, ("",))[0] in ("failed", "error")
+        done = lambda r: state[f]["rows"].get(r, ("running",))[0] != "running"
+        k = sum(1 for r in rows if (bad(r) if s in ("failed", "error") else done(r) if s in ("running", "partial")
+                                    else state[f]["rows"].get(r, ("",))[0] == s))
+        return s if k == 0 and s in ("failed", "error") else f"{s} · {k} of {len(rows)}"
+
+    def line_out():
+        marks, rows, counts = [], [], {}
+        for f, ts in tables.items():
+            st = state[f]
+            if st["banner"]:
+                marks.append({"file": f, "line": 0, "level": "error", "glyph": "!", "text": "temoc failed: " + st["banner"], "banner": True})
+            ss = [s for s in (table_status(f, t) for t in ts) if s]
+            if st["banner"] or ss:
+                s = "running" if st["running"] else "error" if st["banner"] else max(ss + ["partial"] * (len(ts) - len(ss)), key=worse.index)
+                marks.append({"file": f, "line": 0, "level": level(s), "glyph": words[s],
+                              "text": counted(s, [r for t in ts for r in t["rows"]], f)})
+            for t in ts:
+                s = table_status(f, t)
+                if s:
+                    text = counted(s, t["rows"], f) + ("\n" + t["own"] if t["line"] in st["own"] else "")
+                    marks.append({"file": f, "line": t["line"], "level": level(s), "glyph": words[s], "text": text})
+            for r, (s, notes) in sorted(st["rows"].items()):
+                rows.append({"file": f, "line": r, "level": level(s), "glyph": words[s], "text": "\n".join(notes)})
+                if s != "running":
+                    counts[s] = counts.get(s, 0) + 1
+        running = any(st["running"] or st.get("busy") for st in state.values())
+        bad, ok, zz = counts.get("failed", 0) + counts.get("error", 0), counts.get("passed", 0), counts.get("snoozed", 0)
+        tally = " ".join(x for x in [f"{bad} ✗" if bad else "", f"{ok} ✓", f"💤 {zz}" if zz else ""] if x)
+        what = command[-1].split(" -- ")[-1]
+        tag = ({"glyph": "🧪", "text": "temoc " + what.split("/")[-1] + "…", "hint": "temoc: running " + what} if running
+               else {"glyph": "🧪", "text": "failed", "hint": "temoc: " + bill + ": " + banner[bill]} if state[bill]["banner"]
+               else {"glyph": "🧪", "text": tally, "hint": "temoc at 3f9c2a1"})
+        note = (f"temoc at `3f9c2a1`: {bad} did not pass, {ok} passed\n\n**{spec}**\n" +
+                "".join(f"- `{spec}:{r}` {n}\n" for r, (s, ns) in sorted(state[spec]["rows"].items())
+                        if s in ("failed", "error") for n in ns))
+        print(json.dumps({"pr": url, "tags": [tag], "note": note,
+                          "marks": {"ref": HEAD, "command": command[-1], "lines": marks + rows}}, ensure_ascii=False), flush=True)
+
+    def run(file="", line=0, delay=0.6):
+        files = [file] if file else list(tables)
+        targets = []  # (file, table, rows)
+        for f in files:
+            for t in tables[f]:
+                if not line or line == t["line"]:
+                    targets.append((f, t, t["rows"]))
+                elif line in t["rows"]:
+                    targets.append((f, t, [line]))
+        command.append("temoc -c Config.toml --output jsonl -- " + (f"{file}:{line}" if line else file or " ".join(files)))
+        for f, t, rows in targets:  # clear what's about to run
+            for r in rows:
+                state[f]["rows"].pop(r, None)
+            state[f]["own"].discard(t["line"])
+            if not line:
+                state[f]["banner"] = None
+            state[f]["busy"] = True
+        if delay:
+            line_out()
+        for f, t, rows in targets:
+            if f in banner:  # its hooks fail: nothing in it runs
+                state[f]["banner"] = banner[f]
+                for r in rows:
+                    state[f]["rows"][r] = final[r]
+                continue
+            state[f]["running"] = t["line"]
+            for r in rows:
+                state[f]["rows"][r] = ("running", [])
+                if delay:
+                    line_out()
+                    time.sleep(delay)
+                state[f]["rows"][r] = final.get(r, ("passed", []))
+            if t["own"]:
+                state[f]["own"].add(t["line"])
+            state[f]["running"] = None
+        for st in state.values():
+            st["busy"] = False
+        line_out()
+
+    run(delay=0)  # at start: as if a run of the PR had just ended
     print(json.dumps({"health": "ok"}), flush=True)
     print(json.dumps({"actions": [{"id": "run", "key": "T", "label": "run the PR's temoc specs",
-                                   "button": "Run specs"}]}, ensure_ascii=False), flush=True)
-    for _ in sys.stdin:  # `T`: the same results again
-        print(line, flush=True)
+                                   "button": "Run specs", "line": True}]}, ensure_ascii=False), flush=True)
+    for l in sys.stdin:
+        try:
+            a = json.loads(l)
+        except ValueError:
+            continue
+        if a.get("action") == "run" and a.get("pr") == url:
+            run(a.get("file", ""), a.get("line", 0) if a.get("file") else 0)
 
 
 if __name__ == "__main__":

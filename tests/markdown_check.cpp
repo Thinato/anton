@@ -236,32 +236,45 @@ int main() {
     };
     std::vector<std::string> got;
     for (auto& l : md::annotate(md::render(t, 40 - md::kGutter), ms, 40)) got.push_back(md::plain(l));
+    // the table grows to hold its row's note and its footer
     std::vector<std::string> want = {
         "✗  1 failed",
         "",
         "   Sums:",
         "",
-        "✗  🧪 Calc · 1 failed, 1 passed",
-        "   ┌───┬──────┐",
-        "   │ a │ sum? │",
-        "   ├───┼──────┤",
-        "✓  │ 1 │ 1    │",
-        "✗  │ 2 │ 5    │",
-        "–  │ 3 │ 3    │",
-        "   └───┴──────┘",
-        "   ✗ line 8 · sum: expected 5, got 4",
+        "✗  🧪 Calc",
+        "   ┌───┬──────────────────────┐",
+        "   │ a │ sum?                 │",
+        "   ├───┼──────────────────────┤",
+        "✓  │ 1 │ 1                    │",
+        "✗  │ 2 │ 5                    │",
+        "   │   sum: expected 5, got 4 │",
+        "–  │ 3 │ 3                    │",
+        "   ├───┴──────────────────────┤",
+        "   │ ✗ 1 failed, 1 passed     │",
+        "   └──────────────────────────┘",
         "",
         "•  A long paragraph that wraps onto a",
         "   second line.",
         "   • line 12 · line two",
     };
+    auto out = md::annotate(md::render(t, 40 - md::kGutter), ms, 40);
     if (got != want)
       for (auto& g : got) std::fprintf(stderr, "[%s]\n", g.c_str());
     assert(got == want);
     for (auto& g : got) assert(ftxui::string_width(g) <= 40);
-    // a badge's text that doesn't fit goes under it
+    // rows are tinted by result (dim isn't), their note inside the table too, Note-red
+    assert(out[8].tint == md::Ok && out[9].tint == md::Error && out[10].tint == md::Error && out[11].tint == 0);
+    assert(out[10].spans[3].text == "sum: expected 5, got 4" && out[10].spans[3].style == md::Note);
+    assert(out[13].spans[2].style == md::Error && out[0].tint == 0);
+    // a test table's lines know their directive; the header knows it's one
+    assert(out[5].test == 3 && out[6].test == 3 && out[6].head && !out[8].head && out[8].src == 7);
+    assert(out[13].test == 3 && out[13].src == 0 && out[14].part == md::Part::TableEnd);
+    // a narrow screen: the table grows only as far as it can, notes wrap inside it
     auto narrow = md::annotate(md::render(t, 20 - md::kGutter), ms, 20);
-    assert(md::plain(narrow[4]) == "✗  🧪 Calc" && md::plain(narrow[5]) == "      1 failed, 1");
+    for (auto& l : narrow) assert(ftxui::string_width(md::plain(l)) <= 20);
+    assert(md::plain(narrow[4]) == "✗  🧪 Calc" && md::plain(narrow[10]) == "   │   sum:        │");
+    assert(md::plain(narrow[11]) == "   │   expected 5, │" && md::plain(narrow[15]) == "   │ ✗ 1 failed, 1…│");
     // the tab's summary counts rows only, by glyph
     auto counts = md::tally(ms, md::directives(t));
     assert(counts.size() == 4);
@@ -271,6 +284,82 @@ int main() {
     assert(counts[3].glyph == "–" && counts[3].style == md::Dim);
     // no marks: only the empty gutter
     assert(md::plain(md::annotate(md::render("x", 10), {}, 13)[0]) == "   x");
+  }
+
+  // temoc-ui's look: a note line per failing check, a snoozed note dim, the
+  // table's own failure under its footer, and a banner across the top
+  {
+    std::string t =
+        "[//]: # \"decisionTable Calc\"\n"  // 1
+        "\n"
+        "| a | b | mul? |\n"                // 3
+        "|---|---|---|\n"
+        "| 2 | 2 | 5 |\n"                   // 5
+        "| 1 | 1 | 9 |\n"                   // 6
+        "\n"
+        "[//]: # \"decisionTable Gone\"\n"  // 8
+        "\n"
+        "| a |\n"                           // 10
+        "|---|\n"
+        "| 1 |\n";                          // 12
+    std::vector<Mark> ms = {
+        {"s.md", 0, "error", "!", "temoc failed: server_died", true},
+        {"s.md", 0, "error", "✗", "failed · 1 of 3"},
+        {"s.md", 1, "error", "✗", "failed · 1 of 2"},
+        {"s.md", 5, "error", "✗", "mul expected 5, got 4\nsum expected 1, got 2"},
+        {"s.md", 6, "warn", "~", "mul expected 9, got 1 (snoozed until 2099-12-31)"},
+        {"s.md", 8, "error", "!", "error\nmake got exception NO_CLASS Gone"},
+        {"s.md", 12, "dim", "-", ""},
+    };
+    auto out = md::annotate(md::render(t, 50 - md::kGutter), ms, 50);
+    std::vector<std::string> got;
+    for (auto& l : out) got.push_back(md::plain(l));
+    std::vector<std::string> want = {
+        "!   temoc failed: server_died",
+        "✗  failed · 1 of 3",
+        "",
+        "✗  🧪 Calc",
+        "   ┌───┬───┬─────────────────────────────────────┐",
+        "   │ a │ b │ mul?                                │",
+        "   ├───┼───┼─────────────────────────────────────┤",
+        "✗  │ 2 │ 2 │ 5                                   │",
+        "   │   mul expected 5, got 4                     │",
+        "   │   sum expected 1, got 2                     │",
+        "~  │ 1 │ 1 │ 9                                   │",
+        "   │   mul expected 9, got 1 (snoozed until      │",
+        "   │   2099-12-31)                               │",
+        "   ├───┴───┴─────────────────────────────────────┤",
+        "   │ ✗ failed · 1 of 2                           │",
+        "   └─────────────────────────────────────────────┘",
+        "",
+        "!  🧪 Gone",
+        "   ┌─────────────────────────────────────┐",
+        "   │ a                                   │",
+        "   ├─────────────────────────────────────┤",
+        "-  │ 1                                   │",
+        "   ├─────────────────────────────────────┤",
+        "   │ ! error                             │",
+        "   │   make got exception NO_CLASS Gone  │",
+        "   └─────────────────────────────────────┘",
+    };
+    if (got != want)
+      for (auto& g : got) std::fprintf(stderr, "[%s]\n", g.c_str());
+    assert(got == want);
+    std::string banner;
+    for (auto& s : out[0].spans) banner += s.text;
+    assert(out[0].tint == md::Error && ftxui::string_width(banner) == 50 && out[1].tint == 0);  // the banner spans the width
+    assert(out[11].spans[3].style == md::Dim && out[10].tint == md::Warn);  // snoozed: yellow row, quiet note
+    assert(out[24].spans[3].style == md::Note && out[23].spans[2].style == md::Error);
+    assert(md::tally(ms, md::directives(t)).size() == 3);  // rows only: ✗ ~ -, not the file, banner or tables
+  }
+  // a table in a quote: notes keep the quote's bar and the table's border
+  {
+    auto out = md::annotate(md::render("> | a |\n> |---|\n> | 1 |\n", 30 - md::kGutter),
+                            {{"q.md", 3, "error", "✗", "boom"}}, 30);
+    std::vector<std::string> got;
+    for (auto& l : out) got.push_back(md::plain(l));
+    assert((got == std::vector<std::string>{"   │ ┌────────┐", "   │ │ a      │", "   │ ├────────┤",
+                                            "✗  │ │ 1      │", "   │ │   boom │", "   │ └────────┘"}));
   }
 
   // paragraphs and list items know where they start
