@@ -355,6 +355,8 @@ and they must pass to merge. Every merged PR publishes the next release,
 
 `docs/demo/run.sh` runs anton on made-up PRs with a fake `gh`, a fake Slack
 plugin and a fake temoc (`⏎` then `Tab` on the top PR of Code review; its
-`billing.md` tab shows a run that failed outside its rows, and `T`, `r` or
-a `▶` click replays a run row by row).
+`billing.md` tab shows a run that failed outside its rows, `trials.md` one
+not run yet, and `T`, `r` or a `▶` click replays a run phase by phase and
+row by row). `DEMO_TEMOC=badconfig` or `DEMO_TEMOC=crash` before it shows a
+broken temoc.json or a plugin that won't start.
 The screenshot comes from it.

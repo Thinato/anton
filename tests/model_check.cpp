@@ -160,7 +160,13 @@ int main() {
   apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"r","command":"temoc -c t.toml\n-- a.md","lines":[)"
                  R"({"file":"a.md","line":0,"level":"error","text":"temoc failed: x","banner":true},)"
                  R"({"file":"a.md","line":3,"level":"error","banner":true}]}})");
-  assert(st.prs[url].marks_command == "temoc -c t.toml -- a.md");
+  assert(st.prs[url].marks_command == "temoc -c t.toml -- a.md" && !st.prs[url].marks_summary);
+  // a summary: the run as a whole; alone it keeps the PR
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"","lines":[],"summary":{"level":"loud","glyph":"⋯","text":"setting up · 0:23"}}})");
+  assert(st.prs.count(url) && st.prs[url].marks_summary->text == "setting up · 0:23" && st.prs[url].marks_summary->level == "dim");
+  apply_line(st, R"({"pr":"o/r#1","marks":{"ref":"r","command":"temoc -c t.toml\n-- a.md","lines":[)"
+                 R"({"file":"a.md","line":0,"level":"error","text":"temoc failed: x","banner":true},)"
+                 R"({"file":"a.md","line":3,"level":"error","banner":true}]}})");
   assert(st.prs[url].marks[0].banner && !st.prs[url].marks[1].banner);
   // an action that takes a file and line
   apply_line(st, R"({"actions":[{"id":"run","key":"T","line":true},{"id":"x","key":"x","line":"yes"}]})");

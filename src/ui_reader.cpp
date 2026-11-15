@@ -211,6 +211,44 @@ void Ui::reader_jump(const std::string& path, int src) {
     }
 }
 
+std::string Ui::plugin_problem(size_t i) const {
+  const PluginState& st = live[i];
+  const std::string& name = cfg.plugins[i].name;
+  if (st.health == "error") return name + ": " + (st.health_text.empty() ? "error" : st.health_text);
+  if (st.health == "exited")
+    return name + " exited (" + st.health_text + ")" + (st.last_stderr.empty() ? "" : ": " + st.last_stderr);
+  return "";
+}
+
+// A broken plugin can't say anything about a file, so anton says it, on
+// every tab. The description gets each plugin's summary of the PR; a spec
+// file a plugin's summary while that plugin has nothing on any file of the
+// PR yet (a run checking out), else `not run · T to run` when nothing has
+// a line-0 mark on it.
+std::vector<Mark> Ui::reader_top(const std::string& path, bool spec, const std::vector<Mark>& marks) const {
+  std::vector<Mark> out;
+  std::vector<bool> broken(live.size());
+  for (size_t i = 0; i < live.size(); ++i)
+    if (std::string p = plugin_problem(i); !p.empty()) {
+      broken[i] = true;
+      out.push_back({path, 0, "error", "!", p, true});
+    }
+  if (!path.empty() && !spec) return out;
+  bool stated = std::any_of(marks.begin(), marks.end(), [](const Mark& m) { return m.line == 0; });
+  for (size_t i = 0; i < live.size(); ++i) {
+    auto it = live[i].prs.find(reader_url);
+    if (broken[i] || it == live[i].prs.end() || !it->second.marks_summary) continue;
+    if (!path.empty() && !it->second.marks.empty()) continue;
+    Mark m = *it->second.marks_summary;
+    m.file = path, m.banner = m.banner || m.level == "error";
+    out.push_back(m);
+    stated = true;
+  }
+  if (!path.empty() && !stated && out.empty())
+    if (auto k = line_key()) out.push_back({path, 0, "dim", "·", "not run · " + k->action.key + " to run"});
+  return out;
+}
+
 // The file's test tables in order; by +1/-1 from the focused one, stopping
 // at the ends, and the page scrolls to it.
 void Ui::focus_table(int by) {
@@ -290,17 +328,26 @@ Element Ui::render_reader() {
     for (auto& l : doc) l.spans.insert(l.spans.begin(), {std::string(md::kGutter, ' '), 0});
     return doc;
   };
+  auto key_of = [](const std::vector<Mark>& ms) {
+    std::string k;
+    for (auto& m : ms) k += '\0' + std::to_string(m.line) + m.level + (m.banner ? "!" : "") + '\0' + m.glyph + '\0' + m.text;
+    return k;
+  };
   if (!ft) {
-    std::string key = '\0' + day + '\0' + b.text;
-    if (reader_md.key != key || reader_md.width != w) reader_md = {key, w, gutter(md::render(b.text, w, day))};
+    std::vector<Mark> top = reader_top("", false, {});  // broken plugins, each plugin's summary of the PR
+    std::string key = '\0' + day + '\0' + b.text + key_of(top);
+    if (reader_md.key != key || reader_md.width != w) {
+      auto doc = md::render(b.text, w, day);
+      reader_md = {key, w, top.empty() ? gutter(doc) : md::annotate(doc, top, w + md::kGutter)};
+    }
     if (b.text.empty() && b.loading) status.push_back(txt("loading…", Pal::Dim));
     else if (b.text.empty() && !b.error.empty()) status.push_back(txt("couldn't load the description: " + b.error, Pal::Red));
     else if (reader_md.lines.empty()) status.push_back(txt("No description.", Pal::Dim));
   } else {
     marks = marks_on(reader_url, ft->path, b.head, &stale);
+    for (auto& m : reader_top(ft->path, ft->spec, marks)) marks.push_back(m);
     std::string key = ft->path + '\0' + day + '\0' + ft->text;
-    for (auto& m : marks)
-      key += '\0' + std::to_string(m.line) + m.level + (m.banner ? "!" : "") + '\0' + m.glyph + '\0' + m.text;
+    key += key_of(marks);
     for (auto& s : stale) key += '\0' + s;
     if (reader_md.key != key || reader_md.width != w) {
       std::vector<md::Line> lines;
@@ -590,6 +637,12 @@ Element Ui::render_reader() {
       parts.push_back({" · ", Pal::Dim});
       parts.push_back({(t.glyph.empty() ? "" : t.glyph + " ") + t.text, Pal::Fg, tag_person(t)});
     }
+    for (size_t i = 0; i < live.size(); ++i)  // a broken plugin that has no tag here: `🧪 error`
+      if (auto it = live[i].prs.find(p->url); !plugin_problem(i).empty() && (it == live[i].prs.end() || it->second.tags.empty())) {
+        auto g = last_glyph.find(i);
+        parts.push_back({" · ", Pal::Dim});
+        parts.push_back({g != last_glyph.end() ? g->second + " error" : "⚠ " + cfg.plugins[i].name + " error", Pal::Red});
+      }
   }
   Element meta = hbox({text(" "), fit(parts, W - string_width(where) - 4), filler(), txt(where, Pal::Faint)});
 

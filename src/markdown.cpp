@@ -896,15 +896,14 @@ std::vector<Line> annotate(const std::vector<Line>& lines, const std::vector<Mar
     }
   };
 
+  // The file's state: a line across the width, tinted by level (a banner
+  // red), the text bold in its color.
   for (auto* m : top) {
-    if (!m->banner) {
-      lines_of(spans_of(m->text, 0), gutter({m}), 0);
-      continue;
-    }
-    auto wrapped = wrap(spans_of(m->text, Error), std::max(8, width - kGutter - 2));
+    unsigned st = m->banner ? Error : level_style(m->level);
+    auto wrapped = wrap(spans_of(m->text, st), std::max(8, width - kGutter - 2));
     for (size_t k = 0; k < wrapped.size(); ++k) {
       Line l;
-      l.tint = Error;
+      l.tint = st == Dim ? 0 : st;
       l.spans = {k ? Span{std::string(kGutter, ' '), 0} : gutter({m}), {" ", 0}};
       for (auto& s : wrapped[k]) add(l.spans, s.text, s.style | Bold);
       add(l.spans, std::string(static_cast<size_t>(std::max(0, width - cells(text_of(l.spans)))), ' '), 0);

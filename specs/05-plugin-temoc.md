@@ -68,11 +68,17 @@ says `setup failed (exit N)` with the last 20 lines of its output (stdout
 and stderr, interleaved) in a code block. Every run runs it again: a
 `checkout: "pr"` worktree is new each time.
 
-Checked at startup: `key` is one character, `timeout` is in range, each repo
-key is `owner/name` with a `dir` and a `config`, `checkout` is `"pr"` or
-`"as-is"`, `env` holds strings, `setup` is a non-empty array of strings. A
-problem, or a missing file, is `health: error` with the file and the
-problem, no actions, and the plugin idles, as anton-llm does.
+Checked at startup: the file parses as JSON (with comments), `key` is one
+character, `timeout` is in range, each repo key is `owner/name` with a
+`dir` and a `config`, `checkout` is `"pr"` or `"as-is"`, `env` holds
+strings, `setup` is a non-empty array of strings. A problem, or a missing
+file, is `health: error` with the file and the problem, where JSON stops
+parsing included: `~/.config/anton/temoc.json: line 13, column 7:
+unexpected string literal; expected ',' or '}'` (the column is where
+temoc.json's parser noticed, the end of the token after the missing
+comma). The plugin stays up and still offers the key: pressing it answers
+with the problem as the PR's tag (`🧪 error`) and a red banner atop the
+reader (the marks' `summary`), so it isn't only a dot in anton's footer.
 
 ## Runs
 
@@ -108,10 +114,24 @@ On its own thread, anton-temoc:
 5. Runs `temoc -c <config> --output jsonl -- <files…>` (or `<file>:<line>`)
    in the checkout, with `env` added, and folds its events as they come.
 
-**Live**: while temoc runs, the PR's line goes out again whenever its
-results moved, at most four times a second: rows fill in as temoc finishes
-them, the row being run is `⋯`, its table and file `⋯ running`, and the tag
-says what's running (`🧪 temoc calculator.md:15…`).
+**Live**: a run says what it's doing from the moment the key is pressed.
+Line 0 of each file it runs (and the PR's `summary`) is a phase and a clock
+that ticks every second, so a long `setup` with no rows never looks idle:
+
+| phase | line 0 |
+| --- | --- |
+| checking out, listing the PR's files | `⋯ checking out the PR · 0:03` |
+| `setup` | `⋯ setting up · 0:23` |
+| temoc started, no table yet | `⋯ starting temoc · 0:41` |
+| a table running | `⋯ running Multiplication · 3 of 8 · 1:02` (the nearest heading above the table, else its fixture; rows done of its rows) |
+| another file running first | `⋯ waiting for temoc · 1:02` |
+
+A file the run has finished shows its result while the rest goes on. The
+rows it is going to run are `◦` (queued, dim) until temoc gets to them, the
+row being run is `⋯`, its table `⋯ running`. The PR's line goes out
+whenever results move, at most four times a second, and every second while
+a run goes; the tag says what's running (`🧪 temoc calculator.md:15…`,
+`🧪 setup…`) with the phase in its hint.
 
 **Timeout**: SIGTERM to the process group (setup's or temoc's), SIGKILL 5s
 later. temoc handles SIGTERM itself: it stops its server (which runs in a
@@ -205,10 +225,26 @@ checkout) and `command` the temoc command line (the config as written in
   (for running and partial, how many have one), `failed · 1 of 8`, then a
   line per failure of its own: a failed `make` (`make got exception NO_CLASS
   Missing`), or an `import` (it belongs to the first table after it);
-- line 0, the file's: its result, `failed · 2 of 12`; and a `banner` per
-  reason temoc couldn't run it: `temoc failed: <message>` for a failed
-  `setup`, a `setup_failed` of its hooks, a `run_error` about it (or about
-  no file in particular), `server_start_failed` included.
+- line 0, the file's: its result, `failed · 2 of 12`, or while a run gets
+  to it its phase (above); and a `banner` per reason temoc couldn't run
+  it: `temoc failed: <message>` for a failed `setup` (with the last 5 lines
+  of its output), a `setup_failed` of its hooks, a `run_error` about it (or
+  about no file in particular), `server_start_failed` included, temoc not
+  found (`can't start temoc: temoc: No such file or directory (temoc isn't
+  on the PATH anton-temoc got)`), a timeout or a crash;
+- queued rows `◦`, while a run goes (above).
+
+The marks' **`summary`** is the PR's state, atop the reader's Description
+(and a spec's tab before any file is named): the run's phase and clock;
+`✓ passed · 15 of 15` (passed rows of every row of the files with results),
+`✗ failed · 2 of 15` (failed plus error), `~ snoozed · …`; `- no spec files
+changed`; or `! temoc failed: <reason>` when the run failed, a repo missing
+from temoc.json included (`acme/core is not in ~/.config/anton/temoc.json.
+Add it:` and the line to add). Mark texts are cut at 2000 bytes; the note
+has the rest.
+
+When the plugin itself is down (exited, crashed, never started) it can't
+say any of this: anton does (`02-plugins.md`, line 0).
 
 The line is kept under anton's 64 KiB: when there are too many marks, the
 `ok` and `dim` ones go first, then the rest from the end (rows are last);
@@ -248,5 +284,8 @@ tests/temoc_check.cpp    asserts over temoc.hpp: config validation (setup
                          a failing row, a missing fixture, a table run that
                          keeps the rest and fills in live, partial tables,
                          a run_error, failed hooks, a failed setup, run
-                         failures, and the 64 KiB fit
+                         failures, each phase's line 0 with its clock,
+                         queued rows, the PR's summary for every outcome,
+                         temoc.json parse errors with their line, the
+                         broken-config answer, and the 64 KiB fit
 ```

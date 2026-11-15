@@ -403,6 +403,8 @@ void Ui::on_plugin_line(size_t i, const std::string& line, bool is_err) {
   bool was_ok = st.health == "ok";
   std::string url = apply_line(st, line);
   if (!was_ok && st.health == "ok") notify_approved();  // ready (again): catch it up
+  if (auto it = st.prs.find(url); it != st.prs.end() && !it->second.tags.empty() && !it->second.tags[0].glyph.empty())
+    last_glyph[i] = it->second.tags[0].glyph;
   if (one_shot(i)) {  // health shows live even while the PRs wait for the run to end
     live[i].health = st.health;
     live[i].health_text = st.health_text;

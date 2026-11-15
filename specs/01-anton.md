@@ -464,8 +464,16 @@ on screen.
     exception NO_CLASS Missing`). A table grows its last column to fit its
     notes and footer, up to the width; past that they wrap inside it. A
     directive with no table after it gets the text after its badge.
-  - Line 0's are at the top; a banner mark is a red-tinted line across the
-    page (`temoc failed: <message> (<cause>)`).
+  - Line 0's are the file's state, at the top, each a bold line across
+    the page tinted by level: `⋯ setting up · 0:23` (a run going, its
+    clock ticking), `✓ passed · 15 of 15` green, `✗ failed · 2 of 15` red,
+    a banner red (`temoc failed: <message> (<cause>)`).
+  - Every tab starts with a red banner per broken plugin (health not ok,
+    or exited: `temoc exited (exit code 127): <its last stderr line>`),
+    and the meta line gets `🧪 error` for it. The Description starts with
+    each plugin's `summary` of the PR (`02-plugins.md`); a spec file with
+    no line-0 mark gets the summary while the plugin has nothing on any
+    file yet, else `· not run · T to run`.
   - Elsewhere an error's or warning's text goes under its line, `✗ line 13
     · text`.
 

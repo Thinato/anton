@@ -206,6 +206,7 @@ struct Ui {
     std::vector<md::Line> lines;
   };
   Rendered reader_md, note_md;
+  std::map<size_t, std::string> last_glyph;  // per plugin: its last tag's glyph (🧪), for "🧪 error" once it's down
   int reader_hover = -1;                    // the display line of a test row under the mouse: its ▶ shows
   std::map<std::string, int> reader_focus;  // per file: the focused test table's directive line (J/K, r)
 
@@ -381,6 +382,10 @@ struct Ui {
   void run_line(const std::string& file, int line);
   void reader_jump(const std::string& path, int src);  // scrolls the tab to source line src
   void focus_table(int by);  // J/K: the next or previous test table
+  std::string plugin_problem(size_t i) const;  // "" or why plugin i is broken: health error, exited
+  // Line-0 marks atop a tab ("" path: the description): broken plugins,
+  // summaries, `not run · T to run`.
+  std::vector<Mark> reader_top(const std::string& path, bool spec, const std::vector<Mark>& marks) const;
   ftxui::Element render_reader();
   ftxui::Element render_note();
   bool reader_key(const ftxui::Event& e);

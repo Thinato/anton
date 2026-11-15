@@ -353,6 +353,7 @@ struct PrInfo {
   std::string note;              // longer text `n` opens, e.g. an LLM's review
   std::string marks_ref;         // the commit the marks are about
   std::string marks_command;     // the command that made them, as the plugin shows it
+  std::optional<Mark> marks_summary;  // the run as a whole (file "", line 0), atop the reader
   std::vector<Mark> marks;
 };
 
@@ -470,6 +471,12 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
     };
     info.marks_ref = one_line(str(*it, "ref"));
     info.marks_command = one_line(str(*it, "command"));
+    if (auto s = it->find("summary"); s != it->end() && s->is_object() && !str(*s, "text").empty()) {
+      std::string level = str(*s, "level");
+      if (level != "ok" && level != "error" && level != "warn") level = "dim";
+      info.marks_summary = Mark{"", 0, level, one_line(str(*s, "glyph")), printable(str(*s, "text")),
+                                s->value("banner", nlohmann::json(false)) == true};
+    }
     if (auto ls = it->find("lines"); ls != it->end() && ls->is_array())
       for (auto& m : *ls) {
         if (!m.is_object() || str(m, "file").empty()) continue;
@@ -484,7 +491,7 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
       }
   }
   if (info.lists.empty() && !info.status && info.tags.empty() && !info.watch && info.note.empty() &&
-      info.marks.empty())
+      info.marks.empty() && !info.marks_summary)
     st.prs.erase(url);  // {"pr": url} alone: the plugin has nothing to say about it
   else
     st.prs[url] = std::move(info);

@@ -94,6 +94,7 @@ the row of a spec table, a linter's finding on a line of code.
 | --- | --- |
 | `ref` | the commit the marks are about, normally the PR's head when the plugin looked. A viewer of another commit knows they may be off. |
 | `command` | optional: the command that made them, as the plugin wants it shown (the reader's `LAST COMMAND`). |
+| `summary` | optional `{"level", "glyph", "text", "banner"}`: the PR as a whole, e.g. a run's state (`⋯ setting up · 0:23`, `✓ passed · 15 of 15`, `! temoc failed: …`). Atop the reader's Description, and atop a file's tab while the plugin has no marks on any file of the PR (a run still checking out, a config error). |
 | `file` | path in the repo, as in the PR's diff. |
 | `line` | 1-based line of `file` at `ref`; `0` is the file as a whole. A line can have several marks. |
 | `level` | `ok`, `error`, `warn` or `dim` (didn't run, running, not relevant): how to color it. Anything else reads as `dim`. |
@@ -116,10 +117,23 @@ line:
   (`✗ failed · 1 of 4`), then the text's other lines under it (failures
   that belong to the table, not a row). Up to ` · ` the first line is the
   short form the outline shows (`failed`).
-- **line 0**: at the top of the file; a `banner` is a tinted line across the
-  page. The worst non-banner one is the file's result in the outline.
+- **line 0**: the file's state, at the top: a line across the page, bold,
+  tinted by level (`ok` green, `error` red, `warn` yellow, `dim` not at
+  all; a `banner` always red). The worst non-banner one is the file's
+  result in the outline. A plugin that runs something says on line 0 what
+  it is doing, and re-sends it as it goes (anton-temoc: every second, with
+  a clock), so a long step never looks idle.
 - **anything else**: an `error` or `warn` mark's text under the line, as
   `✗ line 13 · text`.
+
+anton adds its own line-0 states: a red banner on every tab (the
+Description too) for each plugin whose `health` isn't ok or that exited
+(`temoc: ~/.config/anton/temoc.json: line 13, column 7: …`, `temoc exited
+(exit code 127): <its last stderr line>`), since a broken plugin can't name
+a file; with it, a `🧪 error` tag in the reader (the plugin's last tag
+glyph, `⚠ <name> error` before it ever tagged). And on a spec file nothing
+has a line-0 mark on: `· not run · T to run`, `T` the first action that
+takes a line.
 
 `ok` and `dim` marks on rows are only their glyph and tint. A mark on a
 line that shows nothing (a blank line, the middle of a paragraph) goes on

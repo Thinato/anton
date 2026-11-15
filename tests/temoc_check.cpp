@@ -22,11 +22,13 @@ static void fold_all(Outcome& o, Results& r, const std::string& jsonl) {
 
 static bool has_mark(const Results& r, const std::string& file, int line, const std::string& level,
                      const std::string& glyph, const std::string& text, bool banner = false) {
-  for (auto& m : marks_of(r))
+  for (auto& m : marks_of(r, 1000))
     if (m.file == file && m.line == line && m.level == level && m.glyph == glyph && m.text == text && m.banner == banner)
       return true;
   return false;
 }
+
+static std::string line_of(const PrState& st) { return pr_line(PR, st, 1000); }
 
 static PrState done(const Results& r, const Outcome& o) {
   PrState st;
@@ -155,8 +157,8 @@ int main() {
   assert(has_mark(r, c2f, 32, "warn", "~",
                   "exp expected 1, got exception NO_METHOD_IN_CLASS exp Calculator.Fixtures.CalculatorFixture (snoozed until 2099-12-31)"));
   assert(has_mark(r, c2f, 28, "warn", "~", "snoozed · 4 of 4") && has_mark(r, c2f, 0, "warn", "~", "snoozed · 4 of 15"));
-  assert(marks_of(r).size() == 27 + 7 + 2);  // rows, tables, files
-  json j = json::parse(pr_line(PR, done(r, o)));
+  assert(marks_of(r, 1000).size() == 27 + 7 + 2);  // rows, tables, files
+  json j = json::parse(line_of(done(r, o)));
   assert(j["tags"][0]["glyph"] == "🧪" && j["tags"][0]["text"] == "23 ✓ 💤 4");
   assert(j["tags"][0]["hint"] == "temoc at 0123456: 23 passed, 4 snoozed");
   assert(j["marks"]["ref"] == "0123456789abcdef" && j["marks"]["lines"].size() == 36);
@@ -175,7 +177,7 @@ int main() {
   assert(has_mark(r, "bad.md", 2, "error", "✗", "failed · 1 of 1"));
   assert(has_mark(r, "bad.md", 8, "error", "!", "error\nmake got exception NO_CLASS NoSuchFixture"));
   assert(has_mark(r, "bad.md", 12, "dim", "-", "") && has_mark(r, "bad.md", 0, "error", "!", "error · 1 of 2"));
-  j = json::parse(pr_line(PR, done(r, o)));
+  j = json::parse(line_of(done(r, o)));
   assert(j["tags"][0]["text"] == "1 ✗ 1 skipped");
   assert(j["note"] == "temoc at `abcdef0`: 1 failed, 1 skipped\n\n"
                       "**bad.md**: error\n"
@@ -185,31 +187,34 @@ int main() {
 
   // Running a table clears it and keeps the rest; its rows fill in live
   Results kept = r;
-  begin(r, {"bad.md", 8});
+  begin(r, {"bad.md", 8}, 1000);
   assert(!r.files["bad.md"].rows.count(12) && r.files["bad.md"].rows.count(6) && r.files["bad.md"].tables[1].failures.empty());
   Outcome live;
   fold_all(live, r, R"({"type":"file_started","file":"bad.md","tables":[{"line":8,"rows":[12]}]}
 {"type":"table_started","file":"bad.md","line":8}
 {"type":"row_started","file":"bad.md","table":8,"line":12})");
   assert(has_mark(r, "bad.md", 12, "dim", "⋯", "") && has_mark(r, "bad.md", 8, "dim", "⋯", "running · 0 of 1"));
-  assert(has_mark(r, "bad.md", 0, "dim", "⋯", "running · 1 of 2") && has_mark(r, "bad.md", 6, "error", "✗", "sum expected 4, got 3"));
+  assert(has_mark(r, "bad.md", 0, "dim", "⋯", "running NoSuchFixture · 0 of 1 · 0:00"));  // the file says what's running
+  assert(has_mark(r, "bad.md", 6, "error", "✗", "sum expected 4, got 3"));
   PrState going;
   going.running = true, going.target = {"specs/bad.md", 8}, going.results = r;
-  j = json::parse(pr_line(PR, going));
-  assert(j["tags"][0]["text"] == "temoc bad.md:8…" && j["tags"][0]["hint"] == "temoc: running specs/bad.md:8");
+  j = json::parse(line_of(going));
+  assert(j["tags"][0]["text"] == "temoc bad.md:8…");
+  assert(j["tags"][0]["hint"] == "temoc: running NoSuchFixture · 0 of 1 · 0:00 (specs/bad.md:8)");
+  assert(j["marks"]["summary"]["text"] == "running NoSuchFixture · 0 of 1 · 0:00" && j["marks"]["summary"]["glyph"] == "⋯");
   live.timed_out = true, live.timeout = 30, live.files = {"bad.md"};
   end(r, live);  // a run cut short: nothing stays running, and the file says why
   assert(!r.files["bad.md"].rows.count(12) && !r.files["bad.md"].running && !r.files["bad.md"].tables[1].running);
   assert(has_mark(r, "bad.md", 0, "error", "!", "temoc failed: timed out after 30s", true));
   // A row: just that row; a file: all of it; every file: everything
   r = kept;
-  begin(r, {"bad.md", 6});
+  begin(r, {"bad.md", 6}, 1000);
   assert(!r.files["bad.md"].rows.count(6) && r.files["bad.md"].rows.count(12));
   assert(status(r.files["bad.md"].tables[0], r.files["bad.md"]) == St::None);  // its only row: not run now
-  begin(r, {"bad.md", 0});
+  begin(r, {"bad.md", 0}, 1000);
   assert(!r.files.count("bad.md"));
   r = kept;
-  begin(r, {});
+  begin(r, {}, 1000);
   assert(r.files.empty());
   // A row run on a table the checkout's text knows: the rest of it is partial
   Results part;
@@ -225,7 +230,7 @@ int main() {
   assert(failure(o) == "server_start_failed in bad.md: failed to fill whole buffer (server exit status: 127)");
   assert(has_mark(r, "bad.md", 0, "error", "!", "temoc failed: failed to fill whole buffer (server exit status: 127)", true));
   assert(has_mark(r, "bad.md", 0, "error", "!", "error"));
-  j = json::parse(pr_line(PR, done(r, o)));
+  j = json::parse(line_of(done(r, o)));
   assert(j["tags"][0]["text"] == "failed");
   assert(j["tags"][0]["hint"] == "temoc: server_start_failed in bad.md: failed to fill whole buffer (server exit status: 127)");
   assert(j["marks"]["lines"][0]["banner"] == true);
@@ -243,7 +248,7 @@ int main() {
   assert(failure(o) == "hooks.md: " + why);
   assert(has_mark(r, "hooks.md", 0, "error", "!", "temoc failed: " + why, true));
   assert(has_mark(r, "hooks.md", 5, "dim", "-", "skipped · 2 of 2"));
-  j = json::parse(pr_line(PR, done(r, o)));
+  j = json::parse(line_of(done(r, o)));
   assert(j["tags"][0]["text"] == "failed" && j["tags"][0]["hint"] == "temoc: hooks.md: " + why);
   n = j["note"];
   assert(n.starts_with("**temoc failed**: hooks.md: " + why) && n.find("- temoc failed: " + why) != std::string::npos);
@@ -255,19 +260,24 @@ int main() {
   // while a rerun goes, the note no longer leads with the last run's failure
   PrState rerun = done(r, o);
   rerun.running = true;
-  assert(!json::parse(pr_line(PR, rerun))["note"].get<std::string>().starts_with("**temoc failed**"));
+  assert(!json::parse(line_of(rerun))["note"].get<std::string>().starts_with("**temoc failed**"));
 
   // The repo's setup command failed: temoc never ran
   o = {}, r = {};
   o.files = {"a.md"};
   fail_run(o, r, "setup failed (exit 1)\n\n```\nERR_PNPM_NO_LOCKFILE\n```");
-  j = json::parse(pr_line(PR, done(r, o)));
+  j = json::parse(line_of(done(r, o)));
   assert(j["tags"][0]["text"] == "failed" && j["tags"][0]["hint"] == "temoc: setup failed (exit 1)");
-  assert(has_mark(r, "a.md", 0, "error", "!", "temoc failed: setup failed (exit 1)", true));
+  assert(has_mark(r, "a.md", 0, "error", "!", "temoc failed: setup failed (exit 1)\nERR_PNPM_NO_LOCKFILE", true));
   assert(j["note"].get<std::string>().starts_with("**temoc failed**: setup failed (exit 1)\n\n```\nERR_PNPM_NO_LOCKFILE\n```"));
   PrState setup;
-  setup.running = true, setup.phase = "setup";
-  assert(json::parse(pr_line(PR, setup))["tags"][0]["text"] == "setup…");
+  setup.running = true, setup.results.phase = "setup", setup.results.started = 977;
+  j = json::parse(line_of(setup));
+  assert(j["tags"][0]["text"] == "setup…" && j["tags"][0]["hint"] == "temoc: setting up · 0:23");
+  // ...its banner on the file, and the PR's summary, carry the end of the output
+  o.error = "setup failed (exit 3)\n\n```\n1\n2\n3\n4\n5\n6\n```";
+  assert(json::parse(line_of(done(r, o)))["marks"]["summary"] ==
+         json::parse(R"({"level": "error", "glyph": "!", "text": "temoc failed: setup failed (exit 3)\n2\n3\n4\n5\n6", "banner": true})"));
 
   // While a rerun goes, the last results stay; the command shows with the marks
   o = {}, r = {};
@@ -275,12 +285,69 @@ int main() {
   fold_all(o, r, kFailing);
   PrState again = done(r, o);
   again.running = true;
-  j = json::parse(pr_line(PR, again));
+  j = json::parse(line_of(again));
   assert(j["tags"][0]["text"] == "temoc…" && j.contains("note") && j["marks"]["command"] == r.command);
   PrState first;
   first.running = true;
-  assert(pr_line(PR, first) == R"({"pr":"https://github.com/acme/core/pull/12","tags":[{"glyph":"🧪","hint":"temoc: running the PR's specs","text":"temoc…"}]})");
-  assert(pr_line(PR, {}) == R"({"pr":"https://github.com/acme/core/pull/12"})");
+  begin(first.results, {}, 1000);
+  j = json::parse(line_of(first));
+  assert(j["tags"][0]["text"] == "temoc…" && j["tags"][0]["hint"] == "temoc: checking out the PR · 0:00");
+  assert(j["marks"]["lines"].empty() && j["marks"]["summary"]["text"] == "checking out the PR · 0:00" && !j.contains("note"));
+  assert(line_of({}) == R"({"pr":"https://github.com/acme/core/pull/12"})");
+
+  // A run's every phase, on line 0 of the file it runs, with a clock
+  {
+    Results pr;
+    begin(pr, {"calc.md", 0}, 1000);  // a file temoc never ran: named already
+    assert(has_mark(pr, "calc.md", 0, "dim", "⋯", "checking out the PR · 0:00"));
+    set_tables(pr.files["calc.md"], tables_of("# Calc\n## Addition\n[//]: # \"decisionTable Calculator\"\n\n"
+                                              "| a | sum? |\n|---|---|\n| 1 | 1 |\n| 2 | 2 |\n"));
+    queue(pr.files["calc.md"], 0);
+    pr.run_files = {"calc.md"}, pr.phase = "setup";
+    std::vector<Mark> ms = marks_of(pr, 1023);
+    assert(std::any_of(ms.begin(), ms.end(), [](const Mark& m) { return m.line == 0 && m.text == "setting up · 0:23"; }));
+    assert(has_mark(pr, "calc.md", 7, "dim", "◦", "") && has_mark(pr, "calc.md", 8, "dim", "◦", ""));  // queued
+    pr.phase = "starting";
+    assert(marks_of(pr, 1061)[0].text == "starting temoc · 1:01");
+    Outcome po;
+    fold_all(po, pr, R"({"type":"file_started","file":"calc.md","tables":[{"line":3,"rows":[7,8]}]}
+{"type":"table_started","file":"calc.md","line":3}
+{"type":"row_finished","file":"calc.md","table":3,"line":7,"status":"passed","checks":[]}
+{"type":"row_started","file":"calc.md","table":3,"line":8})");
+    assert(marks_of(pr, 1062)[0].text == "running Addition · 1 of 2 · 1:02");  // named by its heading
+    assert(has_mark(pr, "calc.md", 8, "dim", "⋯", "") && !pr.files["calc.md"].queued.count(7));
+    fold_all(po, pr, R"({"type":"row_finished","file":"calc.md","table":3,"line":8,"status":"passed","checks":[]}
+{"type":"table_finished","file":"calc.md","line":3}
+{"type":"file_finished","file":"calc.md"})");
+    assert(has_mark(pr, "calc.md", 0, "ok", "✓", "passed · 2 of 2"));  // done: its result, though the run goes on
+    po.finished = true;
+    end(pr, po);
+    PrState ps;
+    ps.results = pr, ps.last = po;
+    assert(summary_of(ps, 2000)->text == "passed · 2 of 2" && summary_of(ps, 2000)->level == "ok");
+  }
+  // The PR's summary when rows failed, and why temoc couldn't run
+  {
+    Outcome fo;
+    Results fr;
+    fold_all(fo, fr, kFailing);
+    PrState fs = done(fr, fo);
+    assert(summary_of(fs, 0)->text == "failed · 1 of 2" && summary_of(fs, 0)->glyph == "✗");
+    fs.last->timed_out = true, fs.last->timeout = 900;
+    assert(summary_of(fs, 0)->text == "temoc failed: timed out after 900s" && summary_of(fs, 0)->banner);
+    fs.last->error = "can't start temoc: No such file or directory (temoc isn't on the PATH anton-temoc got)";
+    assert(summary_of(fs, 0)->text == "temoc failed: " + fs.last->error);
+    fs.last->error = "acme/core is not in ~/.config/anton/temoc.json. Add it:\n\n```json\n\"repos\": {}\n```";
+    assert(summary_of(fs, 0)->text == "temoc failed: acme/core is not in ~/.config/anton/temoc.json. Add it:\n\"repos\": {}");
+  }
+  // A broken temoc.json: where it breaks, and the key answers with it
+  assert(err_of("{\n  \"key\": \"T\"\n  \"timeout\": 9\n}") == "line 3, column 11: unexpected string literal; expected ',' or '}'");
+  assert(err_of("{\"repos\": [1 2]}") .starts_with("line 1, column 14: "));
+  assert(err_of("{\"timeout\": 9") .starts_with("line 1, column 14: "));
+  j = json::parse(problem_line(PR, "~/.config/anton/temoc.json: line 3, column 3: x"));
+  assert(j["tags"][0]["text"] == "error" && j["tags"][0]["hint"] == "temoc: ~/.config/anton/temoc.json: line 3, column 3: x");
+  assert(j["marks"]["summary"]["text"] == "temoc failed: ~/.config/anton/temoc.json: line 3, column 3: x");
+  assert(j["marks"]["summary"]["level"] == "error" && j["marks"]["lines"].empty());
 
   // Other failures of the run as a whole
   Outcome bare;
@@ -300,19 +367,19 @@ int main() {
   assert(failure(cancelled) == "temoc was cancelled");
   Outcome nocfg;
   nocfg.error = "acme/core is not in ~/.config/anton/temoc.json. Add it:\n\n```json\n...\n```";
-  j = json::parse(pr_line(PR, done({}, nocfg)));
+  j = json::parse(line_of(done({}, nocfg)));
   assert(j["tags"][0]["text"] == "failed" && j["tags"][0]["hint"] == "temoc: acme/core is not in ~/.config/anton/temoc.json. Add it:");
-  assert(j["note"] == "**temoc failed**: " + nocfg.error && !j.contains("marks"));
+  assert(j["note"] == "**temoc failed**: " + nocfg.error && j["marks"]["lines"].empty() && j["marks"]["summary"]["banner"] == true);
   Outcome none;
   none.nothing = "No spec files changed.";
-  j = json::parse(pr_line(PR, done({}, none)));
+  j = json::parse(line_of(done({}, none)));
   assert(j["tags"][0]["text"] == "no specs" && j["note"] == "No spec files changed.");
 
   // A huge run_error message still fits the line: the hint is cut
   Outcome huge;
   Results hr;
   fold_all(huge, hr, "{\"type\":\"run_error\",\"kind\":\"protocol_error\",\"message\":\"" + std::string(70000, 'x') + "\"}\n");
-  std::string hl = pr_line(PR, done(hr, huge));
+  std::string hl = line_of(done(hr, huge));
   assert(hl.size() <= kMaxLine && json::parse(hl)["tags"][0]["hint"].get<std::string>().size() < 400);
 
   // Odd events don't throw, and a row on no line is dropped
@@ -336,7 +403,7 @@ int main() {
   }
   Outcome bo;
   bo.finished = true, bo.files = {"specs/big.md"};
-  std::string line = pr_line(PR, done(big, bo));
+  std::string line = line_of(done(big, bo));
   assert(line.size() <= kMaxLine);
   j = json::parse(line);
   assert(j["marks"]["lines"].size() == 3 && j["marks"]["lines"][2]["line"] == 4002);

@@ -238,7 +238,7 @@ int main() {
     for (auto& l : md::annotate(md::render(t, 40 - md::kGutter), ms, 40)) got.push_back(md::plain(l));
     // the table grows to hold its row's note and its footer
     std::vector<std::string> want = {
-        "✗  1 failed",
+        "✗   1 failed",
         "",
         "   Sums:",
         "",
@@ -266,7 +266,7 @@ int main() {
     // rows are tinted by result (dim isn't), their note inside the table too, Note-red
     assert(out[8].tint == md::Ok && out[9].tint == md::Error && out[10].tint == md::Error && out[11].tint == 0);
     assert(out[10].spans[3].text == "sum: expected 5, got 4" && out[10].spans[3].style == md::Note);
-    assert(out[13].spans[2].style == md::Error && out[0].tint == 0);
+    assert(out[13].spans[2].style == md::Error && out[0].tint == md::Error);
     // a test table's lines know their directive; the header knows it's one
     assert(out[5].test == 3 && out[6].test == 3 && out[6].head && !out[8].head && out[8].src == 7);
     assert(out[13].test == 3 && out[13].src == 0 && out[14].part == md::Part::TableEnd);
@@ -316,7 +316,7 @@ int main() {
     for (auto& l : out) got.push_back(md::plain(l));
     std::vector<std::string> want = {
         "!   temoc failed: server_died",
-        "✗  failed · 1 of 3",
+        "✗   failed · 1 of 3",
         "",
         "✗  🧪 Calc",
         "   ┌───┬───┬─────────────────────────────────────┐",
@@ -347,10 +347,16 @@ int main() {
     assert(got == want);
     std::string banner;
     for (auto& s : out[0].spans) banner += s.text;
-    assert(out[0].tint == md::Error && ftxui::string_width(banner) == 50 && out[1].tint == 0);  // the banner spans the width
+    assert(out[0].tint == md::Error && ftxui::string_width(banner) == 50 && out[1].tint == md::Error);  // the banner spans the width; the summary is red too
     assert(out[11].spans[3].style == md::Dim && out[10].tint == md::Warn);  // snoozed: yellow row, quiet note
     assert(out[24].spans[3].style == md::Note && out[23].spans[2].style == md::Error);
     assert(md::tally(ms, md::directives(t)).size() == 3);  // rows only: ✗ ~ -, not the file, banner or tables
+  }
+  // the file's state lines: green when passed, untinted while running
+  {
+    auto s = md::annotate(md::render("x", 20), {{"f", 0, "ok", "✓", "passed · 15 of 15"}, {"f", 0, "dim", "⋯", "setting up · 0:23"}}, 23);
+    assert(md::plain(s[0]) == "✓   passed · 15 of 15" && s[0].tint == md::Ok && s[0].spans[2].style == (md::Ok | md::Bold));
+    assert(md::plain(s[1]) == "⋯   setting up · 0:23" && s[1].tint == 0 && md::plain(s[3]) == "   x");
   }
   // a table in a quote: notes keep the quote's bar and the table's border
   {

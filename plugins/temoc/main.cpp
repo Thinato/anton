@@ -127,7 +127,11 @@ static void execute(const std::string& url, const Target& target, Outcome& o) {
       res.files.clear();
       res.ref = o.ref;
     }
-    for (auto& [name, tables] : specs) set_tables(res.files[name], tables);
+    for (auto& [name, tables] : specs) {
+      set_tables(res.files[name], tables);
+      queue(res.files[name], target.line);
+    }
+    res.run_files = o.files;
     res.command = shown;
     touch(url);
   }
@@ -142,8 +146,8 @@ static void execute(const std::string& url, const Target& target, Outcome& o) {
   if (!r.setup.empty()) {
     {
       std::lock_guard lk(mu);
-      prs[url].phase = "setup";
-      emit(pr_line(url, prs[url]));
+      prs[url].results.phase = "setup";
+      touch(url);
     }
     std::string out;
     auto keep = [&](const std::string& l) {
@@ -151,11 +155,6 @@ static void execute(const std::string& url, const Target& target, Outcome& o) {
       if (out.size() > 65536) out.erase(0, out.size() - 32768);
     };
     Watched s = watch(r.setup, r.env, "", cwd, left(), keep, keep);
-    {
-      std::lock_guard lk(mu);
-      prs[url].phase.clear();
-      touch(url);
-    }
     std::string end = last_lines(out, 20);
     std::string shown_out = end.empty() ? "" : "\n\n```\n" + end + "\n```";
     if (!s.error.empty()) return fail("can't start the setup command " + r.setup[0] + ": " + s.error);
@@ -163,6 +162,11 @@ static void execute(const std::string& url, const Target& target, Outcome& o) {
     if (s.code != 0) return fail("setup failed (exit " + std::to_string(s.code) + ")" + shown_out);
   }
 
+  {
+    std::lock_guard lk(mu);
+    prs[url].results.phase = "starting";  // until its first table starts
+    touch(url);
+  }
   Watched w = watch(
       args, r.env, "", cwd, left(),
       [&](const std::string& l) {
@@ -174,7 +178,9 @@ static void execute(const std::string& url, const Target& target, Outcome& o) {
         o.err += l + "\n";
         if (o.err.size() > 8192) o.err.erase(0, o.err.size() - 4096);
       });
-  if (!w.error.empty()) return fail("can't start temoc: " + w.error);
+  if (!w.error.empty())
+    return fail("can't start temoc: " + w.error +
+                (w.error.find("No such file") != std::string::npos ? " (temoc isn't on the PATH anton-temoc got)" : ""));
   o.exit_code = w.code;
   o.timed_out = w.timed_out;
   o.err = tail(o.err, 2000);
@@ -205,8 +211,8 @@ static void serve_one(const std::string& line) {
   ++running;
   st.running = true;
   st.target = target;
-  begin(st.results, target);
-  emit(pr_line(url, st));
+  begin(st.results, target, std::time(nullptr));
+  emit(pr_line(url, st, std::time(nullptr)));
   st.dirty = false;
   std::thread([url, target] {
     Outcome o;
@@ -217,21 +223,25 @@ static void serve_one(const std::string& line) {
     st.running = false;
     end(st.results, o);
     st.last = std::move(o);
-    emit(pr_line(url, st));
+    emit(pr_line(url, st, std::time(nullptr)));
     st.dirty = false;
   }).detach();
 }
 
 // Sends the line of every PR whose results moved, at most four times a
-// second: rows fill in as temoc finishes them.
+// second: rows fill in as temoc finishes them. A run's line also goes out
+// every second, so its clock ticks through a long setup with nothing else
+// to say.
 [[noreturn]] static void ticker() {
   for (;;) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     std::lock_guard lk(mu);
+    std::time_t now = std::time(nullptr);
     for (auto& [url, st] : prs)
-      if (st.dirty) {
-        emit(pr_line(url, st));
+      if (st.dirty || (st.running && st.sent != now)) {
+        emit(pr_line(url, st, now));
         st.dirty = false;
+        st.sent = now;
       }
   }
 }
@@ -252,8 +262,10 @@ int main(int argc, char** argv) {
   }
   if (cfg_path.empty()) cfg_path = llm::config_path("temoc.json");
 
-  // A missing or bad config is reported once, in the footer, and then we
-  // idle: exiting would have anton restart us and say it again and again.
+  // A missing or bad config is reported in the footer (health), and the key
+  // still works: it answers with the problem as the PR's tag and a banner
+  // in the reader. Exiting would have anton restart us and say it again and
+  // again.
   std::string problem;
   if (auto text = read_file(cfg_path); !text) {
     problem = "no " + llm::tilde(cfg_path);
@@ -263,17 +275,22 @@ int main(int argc, char** argv) {
   }
   {
     std::lock_guard lk(mu);
-    if (!problem.empty()) {
-      emit(json({{"health", "error"}, {"text", problem}}).dump(-1, ' ', false, json::error_handler_t::replace));
-    } else {
-      emit(R"({"health":"ok"})");
-      emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}, {"button", "Run specs"}, {"line", true}}}}})
-               .dump(-1, ' ', false, json::error_handler_t::replace));
-    }
+    if (!problem.empty()) emit(json({{"health", "error"}, {"text", problem}}).dump(-1, ' ', false, json::error_handler_t::replace));
+    else emit(R"({"health":"ok"})");
+    if (cfg.key.size() != 1) cfg.key = "T";  // the bad one it read
+    emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}, {"button", "Run specs"}, {"line", true}}}}})
+             .dump(-1, ' ', false, json::error_handler_t::replace));
   }
   std::thread(ticker).detach();
   for (std::string line; std::getline(std::cin, line);) {
-    if (!problem.empty()) continue;
+    if (!problem.empty()) {
+      json in = json::parse(line, nullptr, false);
+      if (std::string url = in.is_object() ? normalize_url(str(in, "pr")) : ""; !url.empty()) {
+        std::lock_guard lk(mu);
+        emit(problem_line(url, problem));
+      }
+      continue;
+    }
     try {
       serve_one(line);
     } catch (const std::exception& e) {  // one bad request is skipped, not fatal
