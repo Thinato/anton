@@ -23,7 +23,7 @@ namespace anton {
 
 using namespace ftxui;
 
-// Case-insensitive subsequence match: "bcore" finds "brick-so/core".
+// Case-insensitive subsequence match: "acore" finds "acme/core".
 bool fuzzy(const std::string& hay, const std::string& needle) { return fuzzy_find(hay, needle).has_value(); }
 
 namespace {

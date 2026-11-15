@@ -316,7 +316,7 @@ inline std::vector<Option> complete(const std::string& word, const Seen& seen, b
 }
 
 // The palettes' match (the TUI's `?`, anton-gui's Ctrl K): needle's
-// characters in hay in order, ignoring case ("bcore" finds "brick-so/core").
+// characters in hay in order, ignoring case ("acore" finds "acme/core").
 // The byte offsets of hay that matched, to highlight them: a contiguous run
 // when needle appears whole ("temoc" in "Run temoc specs"), else the
 // earliest subsequence. nullopt when it doesn't match; empty for "".

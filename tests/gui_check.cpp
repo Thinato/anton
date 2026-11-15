@@ -121,8 +121,8 @@ int main() {
   {
     auto m = fuzzy_find("Run temoc specs", "temoc");
     assert(m && (*m == std::vector<size_t>{4, 5, 6, 7, 8}));
-    auto s = fuzzy_find("brick-so/core", "bcore");
-    assert(s && (*s == std::vector<size_t>{0, 3, 7, 11, 12}));
+    auto s = fuzzy_find("acme/core", "acore");
+    assert(s && (*s == std::vector<size_t>{0, 1, 6, 7, 8}));
     assert(!fuzzy_find("core", "x") && fuzzy_find("Core", "")->empty());
     assert(fuzzy_find("Open in READER", "reader"));
   }
