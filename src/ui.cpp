@@ -763,7 +763,7 @@ void Ui::open_chip_menu(const Chip& c) {
   const Box& b = anchors[m.anchor];
   m.x = b.x_min;
   m.y = b.y_max + 1;
-  m.w = 50;
+  m.w = 54;
   if (!menus.empty()) {  // from the folded "filters" menu: beside it
     m.x = menus.back().x + menus.back().w;
     m.y = menus.back().y;
