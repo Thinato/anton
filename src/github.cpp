@@ -78,11 +78,14 @@ static Pr to_pr(const json& n, const std::string& viewer) {
   pr.author = sget(at(n, "/author"), "login");
   json reviews = at(n, "/latestReviews/nodes"), commits = at(n, "/commits/nodes");
   if (reviews.is_array())
-    for (auto& r : reviews)
-      if (sget(at(r, "/author"), "login") == viewer) {
+    for (auto& r : reviews) {
+      std::string who = sget(at(r, "/author"), "login");
+      if (!who.empty()) pr.reviews.push_back({who, sget(r, "state")});
+      if (who == viewer) {
         pr.my_review = sget(r, "state");
         pr.my_review_at = sget(r, "submittedAt");
       }
+    }
   if (json labels = at(n, "/labels/nodes"); labels.is_array())
     for (auto& l : labels)
       if (std::string name = sget(l, "name"); !name.empty()) pr.labels.push_back(name);

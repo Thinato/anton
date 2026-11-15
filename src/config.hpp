@@ -86,6 +86,17 @@ struct Column {
 
 inline const std::vector<std::string> kColumns = {"repo", "number", "size", "state", "age", "author", "tags", "title"};
 
+// anton-gui's own settings ("gui" in config.json, 06-gui.md). The TUI
+// ignores them; config_write keeps them either way.
+struct GuiPrefs {
+  std::string theme = "system";              // dark | light | system (the OS appearance)
+  int font_size = 13;                        // the interface size, 11-18 px
+  std::string code_font = "JetBrains Mono";  // or "System monospace"
+  std::string density = "comfortable";       // compact | comfortable: the PR list's rows
+  bool views = true, preview = true, run_log = true, status_bar = true;  // panes shown
+  bool operator==(const GuiPrefs&) const = default;
+};
+
 struct Config {
   int refresh_seconds = 120;
   int watch_seconds = 15;  // PRs a plugin marks "watch": true
@@ -111,13 +122,46 @@ struct Config {
   std::string adhoc_query;  // --query: one unsaved view in place of `views` on screen
   std::vector<PluginConfig> plugins;
   std::map<std::string, Person> people;  // lowercased GitHub login -> person
+  GuiPrefs gui;
+  std::string gui_error;  // a bad "gui" value: anton-gui says so, the TUI ignores it
 };
 
-inline std::string config_path() {
-  if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x)
-    return std::string(x) + "/anton/config.json";
+// $XDG_CONFIG_HOME/anton, default ~/.config/anton: config.json, the
+// plugins' files, anton-gui's layout.
+inline std::string config_dir() {
+  if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x) return std::string(x) + "/anton";
   const char* home = std::getenv("HOME");
-  return std::string(home ? home : ".") + "/.config/anton/config.json";
+  return std::string(home ? home : ".") + "/.config/anton";
+}
+
+inline std::string config_path() { return config_dir() + "/config.json"; }
+
+// Where anton-gui keeps its panes' layout: per user, never the cwd.
+inline std::string gui_layout_path() { return config_dir() + "/gui-layout.ini"; }
+
+// The "gui" object; "" or its first problem.
+inline std::string parse_gui(const nlohmann::json& g, GuiPrefs& p) {
+  try {
+    if (!g.is_object()) return "gui: want an object";
+    p.theme = g.value("theme", p.theme);
+    if (p.theme != "dark" && p.theme != "light" && p.theme != "system") return "gui.theme: dark, light or system";
+    p.font_size = std::clamp(g.value("font_size", p.font_size), 11, 18);
+    p.code_font = g.value("code_font", p.code_font);
+    if (p.code_font != "JetBrains Mono" && p.code_font != "System monospace")
+      return "gui.code_font: \"JetBrains Mono\" or \"System monospace\"";
+    p.density = g.value("density", p.density);
+    if (p.density != "compact" && p.density != "comfortable") return "gui.density: compact or comfortable";
+    if (g.contains("panes")) {
+      const nlohmann::json& ps = g.at("panes");
+      p.views = ps.value("views", p.views);
+      p.preview = ps.value("preview", p.preview);
+      p.run_log = ps.value("run_log", p.run_log);
+      p.status_bar = ps.value("status_bar", p.status_bar);
+    }
+  } catch (const nlohmann::json::exception& e) {
+    return std::string("gui: ") + e.what();
+  }
+  return "";
 }
 
 // Parses `text`; returns "" or the first problem found.
@@ -149,6 +193,10 @@ inline std::string parse_config(const std::string& text, Config& c) {
         return "people." + login + ".ansi: want 0-255 or a name like \"red\", \"bright_red\"";
       c.people[lower(login)] = p;
     }
+    // anton-gui's keys: a bad one is anton-gui's to report (gui_error); it
+    // must not keep the terminal UI from starting. They go back to defaults.
+    if (j.contains("gui")) c.gui_error = parse_gui(j.at("gui"), c.gui);
+    if (!c.gui_error.empty()) c.gui = GuiPrefs{};
     if (j.contains("size")) {
       c.green_below = j["size"].value("green_below", c.green_below);
       c.red_from = j["size"].value("red_from", c.red_from);

@@ -32,6 +32,8 @@ inline bool newer(const std::string& latest, const std::string& current) {
 // its old file); without, only says so. Returns a line for the footer, or ""
 // when there's nothing to say: up to date, offline, a dev build, or a
 // platform without prebuilt binaries. Blocking: run it off the UI thread.
-std::string self_update(bool install);
+// self is the release binary this one is (anton, anton-gui): it replaces
+// the running file, the others only where they already are.
+std::string self_update(bool install, const std::string& self = "anton");
 
 }  // namespace anton

@@ -13,6 +13,7 @@ endif()
 option(ANTON_SLKX_PLUGIN "Build the anton-slkx Slack plugin" ON)
 option(ANTON_LLM_PLUGIN "Build the anton-llm review plugin" ON)
 option(ANTON_TEMOC_PLUGIN "Build the anton-temoc acceptance-spec plugin" ON)
+option(ANTON_GUI "Build anton-gui, the desktop UI (Dear ImGui, GLFW, OpenGL 3)" ON)
 
 include(FetchContent)
 
@@ -55,6 +56,7 @@ endif()
 
 add_executable(anton
   src/main.cpp
+  src/core.cpp
   src/markdown.cpp
   src/proc.cpp
   src/github.cpp
@@ -97,10 +99,91 @@ if(ANTON_TEMOC_PLUGIN)
   install(TARGETS anton-temoc RUNTIME DESTINATION bin)
 endif()
 
+if(ANTON_GUI)
+  # GLFW opens the window; it needs the X11 headers on Linux (X11 only:
+  # Wayland sessions run it through XWayland). OpenGL is loaded at run time
+  # (ImGui's loader, glfwGetProcAddress), so no GL library is linked there.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(X11)
+    if(NOT X11_FOUND OR NOT X11_Xrandr_FOUND OR NOT X11_Xinerama_FOUND OR NOT X11_Xcursor_FOUND OR NOT X11_Xi_FOUND)
+      message(FATAL_ERROR "anton-gui needs the X11 development headers (Debian/Ubuntu: "
+        "sudo apt install xorg-dev libgl-dev). To build only the terminal UI, configure with -DANTON_GUI=OFF.")
+    endif()
+  elseif(NOT APPLE)
+    message(FATAL_ERROR "anton-gui builds on macOS and Linux. Configure with -DANTON_GUI=OFF.")
+  endif()
+
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(glfw
+    URL https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip
+    URL_HASH SHA256=b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(glfw)
+
+  # Dear ImGui's docking branch, built here from its sources (it ships no
+  # CMakeLists), with the GLFW and OpenGL 3 backends.
+  FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz
+    URL_HASH SHA256=90ded916bd57db2e0e171b6b098940a47c6f5042725dcdc67fb19940ca8bfdcc
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR none)
+  FetchContent_MakeAvailable(imgui)
+  add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+  target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imgui_SOURCE_DIR}/misc/cpp)
+  target_compile_definitions(imgui PUBLIC GLFW_INCLUDE_NONE IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+  target_link_libraries(imgui PUBLIC glfw)
+  if(APPLE)
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(imgui PUBLIC OpenGL::GL)
+  else()
+    target_link_libraries(imgui PUBLIC ${CMAKE_DL_LIBS})
+  endif()
+
+  # The PNG writer for --screenshot (public domain, one header).
+  FetchContent_Declare(stb_image_write
+    URL https://raw.githubusercontent.com/nothings/stb/9600522de53973336fa033a289858a4354cbb04c/stb_image_write.h
+    URL_HASH SHA256=a8e7f77f0ccfdc9bac09a71268b131931ff81aafca82c393aeb6aaba10d9e7ca
+    DOWNLOAD_NO_EXTRACT TRUE)
+  FetchContent_MakeAvailable(stb_image_write)
+
+  # Inter and JetBrains Mono (SIL OFL 1.1, assets/fonts/*-OFL.txt), compiled in.
+  add_executable(anton_embed cmake/embed.cpp)
+  set(fonts Inter-Regular Inter-Medium Inter-SemiBold JetBrainsMono-Regular)
+  set(embed_args)
+  set(font_files)
+  foreach(f IN LISTS fonts)
+    string(REPLACE "-" "_" sym "font_${f}")
+    list(APPEND embed_args ${sym} ${CMAKE_SOURCE_DIR}/assets/fonts/${f}.ttf)
+    list(APPEND font_files ${CMAKE_SOURCE_DIR}/assets/fonts/${f}.ttf)
+  endforeach()
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/gui_fonts.cpp
+    COMMAND anton_embed ${CMAKE_BINARY_DIR}/gui_fonts.cpp ${embed_args}
+    DEPENDS anton_embed ${font_files}
+    COMMENT "Embedding anton-gui's fonts")
+
+  add_executable(anton-gui
+    src/gui_main.cpp src/gui.cpp src/gui_list.cpp src/gui_reader.cpp src/gui_settings.cpp
+    src/core.cpp src/markdown.cpp src/proc.cpp src/github.cpp src/plugins.cpp src/update.cpp
+    ${CMAKE_BINARY_DIR}/gui_fonts.cpp)
+  target_include_directories(anton-gui PRIVATE src)
+  target_include_directories(anton-gui SYSTEM PRIVATE ${stb_image_write_SOURCE_DIR})
+  target_link_libraries(anton-gui PRIVATE nlohmann_json::nlohmann_json imgui md4c ftxui::screen)
+  target_compile_options(anton-gui PRIVATE ${WARN})
+  target_compile_definitions(anton-gui PRIVATE ANTON_VERSION="${ANTON_VERSION}" IMGUI_DEFINE_MATH_OPERATORS)
+  install(TARGETS anton-gui RUNTIME DESTINATION bin)
+endif()
+
 # Self-checks: assert-based mains over the pure headers. -UNDEBUG because a
 # Release build defines NDEBUG, which would compile every assert away.
 enable_testing()
-foreach(t IN ITEMS model filters fold llm markdown temoc)
+foreach(t IN ITEMS model filters fold llm markdown temoc gui)
   add_executable(${t}_check tests/${t}_check.cpp)
   target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm plugins/temoc)
   target_link_libraries(${t}_check PRIVATE nlohmann_json::nlohmann_json)
@@ -110,3 +193,6 @@ endforeach()
 # The markdown core is a .cpp over md4c, measured with FTXUI's string_width.
 target_sources(markdown_check PRIVATE src/markdown.cpp)
 target_link_libraries(markdown_check PRIVATE md4c ftxui::screen)
+# gui_check: anton-gui's pure parts, which lay out markdown blocks too.
+target_sources(gui_check PRIVATE src/markdown.cpp)
+target_link_libraries(gui_check PRIVATE md4c ftxui::screen)

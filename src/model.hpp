@@ -35,6 +35,7 @@ struct Pr {
   long additions = 0, deletions = 0;
   std::string mergeable;           // MERGEABLE | CONFLICTING | UNKNOWN (GitHub computes it lazily)
   std::vector<std::string> labels;  // names, the first 20
+  std::vector<std::pair<std::string, std::string>> reviews;  // (login, state): each reviewer's latest review
   long changed_files = 0;
   std::time_t created = 0, updated = 0, closed = 0;  // closed: also set when merged
   bool partial = false;  // only url/repo/number/state/closed known (see fetch_states)

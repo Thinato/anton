@@ -556,6 +556,11 @@ above is the personal setup: `#code-review` first, queued PRs marked.
 `mouse` (default true): clicks and the wheel (The screen, above). False
 leaves the mouse to the terminal.
 
+`gui` (default: nothing) holds the desktop app's own settings: `theme`
+(`dark`, `light`, `system`), `font_size`, `code_font`, `density` and the
+`panes` it shows (`06-gui.md`). The terminal UI ignores it. anton-gui keeps
+its panes' layout next to this file, in `gui-layout.ini`.
+
 `--query '<search>'` on the command line opens an ad-hoc view instead of the
 configured ones; it's unsaved (`•`), and saving it adds it to `views`
 without touching the others. `--no-plugins` starts without plugins.
@@ -593,7 +598,7 @@ as it was and says why; changed plugins take effect when anton restarts.
 
 anton reads the file, sets only the keys it manages (`views`, `columns`,
 `size`, `title_strip`, `refresh_seconds`, `watch_seconds`, `auto_update`,
-`mouse`, `start_view`) and writes it back with every other key and value
+`mouse`, `start_view`, and anton-gui's `gui`, one level down the same way) and writes it back with every other key and value
 (`plugins`, `people`, a command column's `command`, keys it doesn't know)
 as they were, keys in their order, 2-space indent. A managed key the file
 doesn't have is only added once it's off its default. A view or column
@@ -618,8 +623,9 @@ At startup and every 15 minutes, anton asks `gh api repos/Thinato/anton/releases
 If that tag is newer (by number: `v0.1.12-beta` > `v0.1.9-beta`; the suffix
 doesn't count), it downloads the tarball for this platform with
 `gh release download`, unpacks it next to the running binary and `rename()`s
-`anton` (whatever it's called), `anton-slkx`, `anton-llm` and `anton-temoc` (each only if
-it's already there) over the old ones. The running process keeps its old file; the footer says
+`anton` (whatever it's called), `anton-gui`, `anton-slkx`, `anton-llm` and `anton-temoc` (each only if
+it's already there) over the old ones. anton-gui does the same with the
+roles swapped: it replaces itself, and `anton` only where it is. The running process keeps its old file; the footer says
 `⬆ updated to vX, restart anton to use it` until quit. Nothing is restarted
 behind your back: plugins keep running the old binaries until anton
 restarts.
@@ -657,8 +663,10 @@ src/model.hpp         Pr, Tag, state derivation, compact(n), age(t),
                       qualifier editing, local query filter — pure
 src/plugins.hpp/cpp   spawn plugins, read JSONL, restart, fold into the store
 src/ui.hpp            run_ui()
-src/ui_impl.hpp       the UI's state and shared pieces (colors, menus, hits)
-src/ui.cpp            fetching, plugins, views, the list, filter bar, menus,
+src/core.hpp/cpp      what the TUI and anton-gui share: views and their
+                      config writes, fetching, plugins, the reader's data
+src/ui_impl.hpp       the TUI's state and shared pieces (colors, menus, hits)
+src/ui.cpp            the list, tab bar, filter bar, menus,
                       the palette, mouse dispatch
 src/ui_reader.cpp     the reader (outline included) and the note overlay
 src/ui_settings.cpp   settings, $EDITOR
@@ -677,15 +685,19 @@ tests/fold_check.cpp  assert-based self-check for fold.hpp
 tests/llm_check.cpp   assert-based self-check for llm.hpp
 tests/markdown_check.cpp  assert-based self-check for markdown.cpp
 tests/temoc_check.cpp     assert-based self-check for temoc.hpp
+src/gui*.cpp, gui.hpp  anton-gui, the desktop UI (06-gui.md)
+src/gui_logic.hpp     its pure parts: theme tokens, pills, the run log's diff
+tests/gui_check.cpp   assert-based self-check for gui_logic.hpp and the gui keys
 ```
 
-One CMake project, four executables. `anton-slkx` is built by default
+One CMake project, five executables: `anton`, `anton-gui` (`06-gui.md`;
+`-DANTON_GUI=OFF` to skip) and three plugins. `anton-slkx` is built by default
 (`-DANTON_SLKX_PLUGIN=OFF` to skip); it only *execs* `slkx` at runtime, so
 building it needs nothing slkx-related, and anton never requires it.
 `anton-llm` likewise (`-DANTON_LLM_PLUGIN=OFF`); it only execs the commands
 you configure. `anton-temoc` too (`-DANTON_TEMOC_PLUGIN=OFF`); it execs `temoc`.
 
-`model.hpp`, `filters.hpp`, `config_write.hpp` (but its `save_config`), `fold.hpp`, `llm.hpp` and `temoc.hpp` are pure, with assert-based checks run by `ctest`,
+`model.hpp`, `filters.hpp`, `config_write.hpp` (but its `save_config`), `fold.hpp`, `llm.hpp`, `temoc.hpp` and `gui_logic.hpp` are pure, with assert-based checks run by `ctest`,
 in the same style as slkx's self-checks.
 
 ## Open questions

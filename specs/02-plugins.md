@@ -223,6 +223,10 @@ re-sends the PR's `pr` line. anton never updates plugin state on its own.
 
 ## Rendering
 
+anton-gui (`06-gui.md`) shows all of it the same way, in panes: STATE as a
+pill, tags as pills and in the preview, actions as buttons, marks in its
+reader, notes in its LLM review pane, a run's progress in its Run log.
+
 - **List views**: rows = union of PRs on `(plugin, list)`, then the view's
   local query filter. A list with no plugin running shows an empty table with
   `slack: not running` instead of "no PRs", so empty never lies.

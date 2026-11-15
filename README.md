@@ -23,7 +23,7 @@ curl --proto '=https' --tlsv1.2 -sSf \
   https://raw.githubusercontent.com/Thinato/anton/main/install.sh | sh
 ```
 
-It puts `anton` and its plugins (`anton-slkx`, `anton-llm`, `anton-temoc`) in `~/.local/bin` (override
+It puts `anton`, the desktop app `anton-gui` and the plugins (`anton-slkx`, `anton-llm`, `anton-temoc`) in `~/.local/bin` (override
 with `ANTON_INSTALL_DIR`) and fetches the latest release (pin one with
 `ANTON_VERSION=v0.1.0-beta`). After that, anton updates itself: when a release
 is out it swaps in the new binaries and asks you to restart
@@ -38,8 +38,11 @@ cmake -B build && cmake --build build
 ./build/anton
 ```
 
-Dependencies (FTXUI, nlohmann/json, md4c) are fetched by CMake. `cmake --install
-build` puts `anton` and its plugins in your prefix.
+Dependencies (FTXUI, nlohmann/json, md4c; Dear ImGui, GLFW and
+stb_image_write for `anton-gui`) are fetched by CMake. On Linux `anton-gui`
+needs the X11 headers (`sudo apt install xorg-dev libgl-dev`); without them,
+or to skip it, configure with `-DANTON_GUI=OFF`. `cmake --install build` puts
+`anton`, `anton-gui` and the plugins in your prefix.
 
 ## Use
 
@@ -335,6 +338,31 @@ the fixtures and, with a `config` inside the repo, the server command the PR
 names. It only runs when you press the key. Details in
 [specs/05-plugin-temoc.md](specs/05-plugin-temoc.md).
 
+## Desktop app
+
+`anton-gui` is the same anton in a window, in GitHub's light and dark
+colors: the views on the left, the PR list with its filter chips, and a
+preview with what each plugin says and its buttons (`Run specs`). It reads
+the same `config.json` and runs the same plugins.
+
+![anton-gui: the views, the PR list and a PR's preview, dark](docs/gui.png)
+
+`Enter` reads a PR: its description and markdown files rendered like
+GitHub, a spec's temoc results on its rows (tinted, marked, what failed
+under the row, each table's result, a `▶` to run a table), and beside it
+the file's results, its tables, what did not pass and the last command,
+with a run log streaming the plugin's progress underneath.
+
+![anton-gui's reader on a temoc spec, light](docs/gui-reader.png)
+
+Every pane docks: drag a tab to move it, a line to resize, out of the
+window to float it; the layout is kept in `~/.config/anton/gui-layout.ini`
+and View › Reset layout puts it back. `Ctrl K` (`Cmd K`) is a command
+palette, `Ctrl ,` the settings (theme, text size, row density, panes,
+views, plugins), saved to `config.json` as you go. The TUI's keys work
+too. Details, the `gui` config keys and `--screenshot` are in
+[specs/06-gui.md](specs/06-gui.md).
+
 ## Develop
 
 ```sh
@@ -344,8 +372,9 @@ cmake --build build && ctest --test-dir build
 The specs in [specs/](specs/) describe what anton does and why. Change the
 spec when you change the behavior. The logic that matters (state ranking,
 filters, the Slack event fold, the LLM config, the markdown renderer, the
-temoc event fold) is kept pure, in `src/model.hpp`, `plugins/slkx/fold.hpp`,
-`plugins/llm/llm.hpp`, `src/markdown.cpp` and `plugins/temoc/temoc.hpp`,
+temoc event fold, anton-gui's theme and run log) is kept pure, in `src/model.hpp`,
+`plugins/slkx/fold.hpp`, `plugins/llm/llm.hpp`, `src/markdown.cpp`,
+`plugins/temoc/temoc.hpp` and `src/gui_logic.hpp`,
 checked by the asserts in `tests/`.
 
 Work goes through pull requests. CI builds and runs the checks on each one,
@@ -353,10 +382,12 @@ and they must pass to merge. Every merged PR publishes the next release,
 `v<major.minor>.N-beta`, with macOS and Linux binaries; bump `VERSION` in
 `CMakeLists.txt` to start a new major.minor.
 
-`docs/demo/run.sh` runs anton on made-up PRs with a fake `gh`, a fake Slack
-plugin and a fake temoc (`⏎` then `Tab` on the top PR of Code review; its
+`docs/demo/run.sh` runs anton (`ANTON=build/anton-gui` for the desktop app)
+on made-up PRs with a fake `gh`, a fake Slack plugin and a fake temoc (`⏎` then `Tab` on the top PR of Code review; its
 `billing.md` tab shows a run that failed outside its rows, `trials.md` one
 not run yet, and `T`, `r` or a `▶` click replays a run phase by phase and
 row by row). `DEMO_TEMOC=badconfig` or `DEMO_TEMOC=crash` before it shows a
 broken temoc.json or a plugin that won't start.
-The screenshot comes from it.
+The screenshots come from it; the desktop app's from
+`ANTON=build/anton-gui ./docs/demo/run.sh --screenshot docs/gui.png --screen list --theme dark --pr 4812`
+(and `--screen reader --theme light --file specs/onboarding.md` for the reader).

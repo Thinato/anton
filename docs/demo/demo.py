@@ -94,6 +94,14 @@ LABELS = {
 }
 
 
+# Other people's latest reviews (anton-gui's Reviewers box).
+REVIEWS = {
+    4812: [("paz-o", "COMMENTED")], 4801: [("dkowalski", "APPROVED")], 4805: [("okafor-c", "COMMENTED")],
+    4814: [("ifernandes", "CHANGES_REQUESTED")], 4827: [("shah-a", "APPROVED")], 4826: [("shah-a", "APPROVED")],
+    4825: [("shah-a", "APPROVED"), ("dkowalski", "APPROVED")], 4830: [("rtanaka", "APPROVED")],
+}
+
+
 # What an LLM reviewer plugin would attach (`n` opens it).
 NOTES = {
     4812: """## Review: skip the team step for single-seat plans
@@ -322,8 +330,10 @@ def node(pr):
         "labels": {"nodes": [{"name": l} for l in LABELS.get(num, [])]},
         "repository": {"nameWithOwner": f"acme/{repo}", "owner": {"login": "acme"}},
         "author": {"login": author},
-        "latestReviews": {"nodes": [{"author": {"login": ME}, "state": "APPROVED",
-                                     "submittedAt": iso(NOW - H)}] if state == "you_ok" else []},
+        "latestReviews": {"nodes": ([{"author": {"login": ME}, "state": "APPROVED",
+                                      "submittedAt": iso(NOW - H)}] if state == "you_ok" else []) +
+                                   [{"author": {"login": who}, "state": st, "submittedAt": iso(NOW - H / 2)}
+                                    for who, st in REVIEWS.get(num, [])]},
         "commits": {"nodes": [{"commit": {"statusCheckRollup": {
             "state": "FAILURE" if state == "checks" else "SUCCESS"}}}]},
     }
@@ -347,6 +357,9 @@ def gh(args):
                 return 0
         print("gh: Not Found (HTTP 404)", file=sys.stderr)
         return 1
+    if args[:2] == ["api", "rate_limit"]:  # anton-gui's status bar
+        print(json.dumps({"resources": {"graphql": {"limit": 5000, "remaining": 4812, "used": 188}}}))
+        return 0
     if args[:2] == ["auth", "status"] or args[:2] == ["pr", "view"]:
         return 0
     if args[:2] != ["api", "graphql"]:

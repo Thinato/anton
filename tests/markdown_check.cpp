@@ -375,6 +375,30 @@ int main() {
   }
   assert(md::render("", 40).empty());
   assert(md::render("<!-- only a template comment -->", 40).empty());
+
+  // blocks(), for anton-gui: the same parse, unwrapped, with source lines
+  {
+    auto b = md::blocks("# Title\n\nsome **bold** text that is long enough to wrap anywhere\n\n- one\n  - two\n- [x] done\n\n"
+                        "> quoted\n\n```\ncode line\n```\n\n---\n");
+    assert(b.size() == 8);
+    assert(b[0].kind == md::Block::Heading && b[0].heading == 1 && b[0].spans[0].text == "Title" && b[0].src == 1);
+    assert(b[1].kind == md::Block::Para && b[1].spans.size() == 3 && b[1].spans[1].style == md::Bold && b[1].src == 3);
+    assert(b[2].bullet == "• " && b[2].indent == 1 && b[3].bullet == "◦ " && b[3].indent == 2 && b[3].src == 6);
+    assert(b[4].bullet == "☑ " && b[4].spans[0].text == "done");
+    assert(b[5].quote == 1 && b[5].indent == 0 && b[5].spans[0].text == "quoted");
+    assert(b[6].kind == md::Block::Code && b[6].spans[0].text == "code line" && b[6].src == 12);
+    assert(b[7].kind == md::Block::Rule);
+  }
+  {  // a temoc test: the badge, then the table with its directive, rows and output column
+    std::string t = "[//]: # \"decisionTable Calc -- snooze until 2026-12-01\"\n\n| a | sum? |\n|--:|---|\n| 1 | 2 |\n";
+    auto b = md::blocks(t, "2026-11-15");
+    assert(b.size() == 2 && b[0].kind == md::Block::Badge && b[0].src == 1);
+    assert(b[0].spans[0].text == "🧪 Calc" && b[0].spans[1].style == md::Warn);
+    assert(b[1].kind == md::Block::Table && b[1].test == 1 && b[1].rows.size() == 2);
+    assert(b[1].rows[0].head && b[1].rows[0].src == 3 && b[1].rows[1].src == 5 && b[1].align[0] == 2);
+    assert(b[1].rows[1].cells[1][0].style == md::Output && b[1].rows[0].cells[1][0].style == (md::Output | md::Bold));
+    assert(md::blocks("| x |\n|---|\n| 1 |\n")[0].test == 0);  // no directive: an ordinary table
+  }
   (void)dump;
   std::puts("markdown_check: ok");
 }

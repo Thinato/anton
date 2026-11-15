@@ -39,7 +39,7 @@ static fs::path exe_path() {
   return ec ? fs::path() : p;
 }
 
-std::string self_update(bool install) {
+std::string self_update(bool install, const std::string& self) {
   if (!parse_version(kVersion) || !target()) return "";
   Result r = run({"gh", "api", std::string("repos/") + kRepo + "/releases/latest", "--jq", ".tag_name"});
   std::string tag = r.out.substr(0, r.out.find_first_of("\r\n"));
@@ -61,11 +61,11 @@ std::string self_update(bool install) {
   else if (run({"tar", "-xzf", (tmp / tarball).string(), "-C", tmp.string()}).code != 0)
     err = "unpack failed";
   else
-    // anton under whatever name it runs as; the plugins only where they
-    // already are, so a dir that never had one doesn't grow it.
-    for (auto [from, to] : {std::pair{tmp / "anton", exe}, std::pair{tmp / "anton-slkx", dir / "anton-slkx"},
-                            std::pair{tmp / "anton-llm", dir / "anton-llm"},
-                            std::pair{tmp / "anton-temoc", dir / "anton-temoc"}}) {
+    // This binary (anton or anton-gui) under whatever name it runs as; the
+    // others only where they already are, so a dir that never had one
+    // doesn't grow it.
+    for (std::string name : {"anton", "anton-gui", "anton-slkx", "anton-llm", "anton-temoc"}) {
+      fs::path from = tmp / name, to = name == self ? exe : dir / name;
       if (!fs::exists(from) || (to != exe && !fs::exists(to))) continue;
       std::error_code ec;
       fs::rename(from, to, ec);

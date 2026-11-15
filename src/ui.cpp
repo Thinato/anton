@@ -1,4 +1,4 @@
-// The PR list: fetching, plugins, views, the filter bar, menus and the
+// The PR list: the tab bar, the filter bar, the table, menus and the
 // palette, mouse dispatch. See ui_impl.hpp for how the UI files split.
 #include "ui.hpp"
 
@@ -23,20 +23,8 @@ namespace anton {
 
 using namespace ftxui;
 
-std::time_t now() { return std::time(nullptr); }
-
-// "2026-11-14", in UTC: temoc's snoozes count days in UTC.
-std::string today() { return ymd(now()); }
-
-// Case-insensitive subsequence match: "bcore" finds "brick-so/core".
-bool fuzzy(const std::string& hay, const std::string& needle) {
-  size_t i = 0;
-  for (char c : hay)
-    if (i < needle.size() && std::tolower(static_cast<unsigned char>(c)) ==
-                                 std::tolower(static_cast<unsigned char>(needle[i])))
-      ++i;
-  return i == needle.size();
-}
+// Case-insensitive subsequence match: "acore" finds "acme/core".
+bool fuzzy(const std::string& hay, const std::string& needle) { return fuzzy_find(hay, needle).has_value(); }
 
 namespace {
 
@@ -130,400 +118,11 @@ bool LineEdit::key(const Event& e) {
   return true;
 }
 
-Ui::Ui(Config c) : cfg(std::move(c)) {
-  if (!cfg.adhoc_query.empty()) {
-    offscreen = cfg.views;
-    tabs.push_back({View{"Query", cfg.adhoc_query, "", "", {}}, std::nullopt});
-  } else {
-    for (auto& v : cfg.views) tabs.push_back({v, v});
-    for (size_t i = 0; i < tabs.size(); ++i)
-      if (tabs[i].v.name == cfg.start_view) active = i;
-  }
-  live.resize(cfg.plugins.size());
-  pending.resize(cfg.plugins.size());
-  running.assign(cfg.plugins.size(), true);
-  last_code.assign(cfg.plugins.size(), 0);
-  approvals.resize(cfg.plugins.size());
-}
+Ui::Ui(Config c) : Core(std::move(c)) {}
 
 void Ui::post(std::function<void()> fn) {
   screen.Post(std::move(fn));
   screen.PostEvent(Event::Custom);
-}
-
-// -- fetching -------------------------------------------------------------------
-
-std::string Ui::effective(const View& v) const {
-  std::string q = with_scope(v.query, scope);
-  return v.is_list() ? q : ensure_is_pr(q);
-}
-
-void Ui::request_search(const std::string& q) {
-  std::lock_guard lk(mu);
-  if (std::find(searches.begin(), searches.end(), q) == searches.end()) searches.push_back(q);
-  busy = true;
-  cv.notify_one();
-}
-
-void Ui::request_urls(const std::vector<std::string>& urls) {
-  if (urls.empty()) return;
-  std::lock_guard lk(mu);
-  for (auto& u : urls) {
-    want_urls.insert(u);
-    requested.insert(u);
-  }
-  busy = true;
-  cv.notify_one();
-}
-
-void Ui::request_full(const std::vector<std::string>& urls) {
-  if (urls.empty()) return;
-  std::lock_guard lk(mu);
-  for (auto& u : urls) {
-    want_full.insert(u);
-    requested_full.insert(u);
-  }
-  busy = true;
-  cv.notify_one();
-}
-
-// Watched PRs that are still open: one quiet full fetch, no "loading…".
-void Ui::poll_watched() {
-  std::vector<std::string> urls;
-  for (size_t i = 0; i < live.size(); ++i)
-    for (auto& [url, info] : live[i].prs)
-      if (auto c = cache.find(url); info.watch && c != cache.end() && c->second.state == "OPEN")
-        urls.push_back(url);
-  last_watch = now();
-  if (urls.empty()) return;
-  std::lock_guard lk(mu);
-  want_full.insert(urls.begin(), urls.end());
-  cv.notify_one();
-}
-
-bool Ui::loading() {
-  std::lock_guard lk(mu);
-  return busy;
-}
-
-void Ui::worker() {
-  for (;;) {
-    std::string q;
-    std::vector<std::string> urls, full;
-    {
-      std::unique_lock lk(mu);
-      cv.wait(lk, [&] { return !searches.empty() || !want_urls.empty() || !want_full.empty(); });
-      // URL work first, batching everything wanted so far.
-      urls.assign(want_urls.begin(), want_urls.end());
-      full.assign(want_full.begin(), want_full.end());
-      want_urls.clear();
-      want_full.clear();
-      if (urls.empty() && full.empty()) {
-        q = searches.front();
-        searches.pop_front();
-      }
-    }
-    Fetch f;
-    bool is_search = urls.empty() && full.empty();
-    try {
-      if (is_search) {
-        f = search_prs(q);
-      } else {
-        // States are cheap; only open PRs (and requested stubs) get the slow
-        // full fetch. The rest are cached as partial stubs.
-        Fetch states = fetch_states(urls);
-        for (auto& s : states.prs)
-          if (s.state == "OPEN") full.push_back(s.url);
-        f = fetch_prs(full);
-        std::set<std::string> have;
-        for (auto& pr : f.prs) have.insert(pr.url);
-        for (auto& s : states.prs)
-          if (!have.count(s.url)) f.prs.push_back(s);
-        if (f.error.empty()) f.error = states.error;
-      }
-    } catch (const std::exception& e) {  // odd JSON, no threads left: report, keep going
-      f.error = std::string("fetch failed: ") + e.what();
-    }
-    post([this, q, f = std::move(f), is_search] {
-      if (!f.viewer.empty()) viewer = f.viewer;
-      std::vector<std::string> got;
-      for (auto& pr : f.prs) {
-        got.push_back(pr.url);
-        if (!pr.owner.empty()) owners.insert(pr.owner);
-        if (!pr.repo.empty()) repos.insert(pr.repo);
-        auto it = cache.find(pr.url);
-        // A new approval: one seen happen, not one that predates anton --
-        // replaying old ones would undo a 👀 you put back for a re-review.
-        if (!pr.partial && pr.my_review == "APPROVED" && it != cache.end() && !it->second.partial &&
-            it->second.my_review_at != pr.my_review_at)
-          for (size_t i = 0; i < approvals.size(); ++i)
-            if (!one_shot(i)) approvals[i].insert(pr.url);
-        if (pr.partial && it != cache.end() && !it->second.partial) {
-          it->second.state = pr.state;  // keep the full data we already have
-          it->second.closed = pr.closed;
-        } else {
-          cache[pr.url] = pr;
-        }
-      }
-      notify_approved();
-      error = f.error;
-      if (!f.error.empty()) return;  // a failed refresh keeps the old rows
-      if (is_search) results[q] = got;
-      last_fetch = now();
-    });
-    std::lock_guard lk(mu);
-    busy = !searches.empty() || !want_urls.empty() || !want_full.empty();
-  }
-}
-
-std::vector<std::string> Ui::list_urls(const View& v) const {
-  std::vector<std::string> out;
-  int pi = plugin_index(v.plugin);
-  if (pi < 0) return out;
-  for (auto& [url, info] : live[static_cast<size_t>(pi)].prs)
-    if (info.lists.count(v.list)) out.push_back(url);
-  return out;
-}
-
-void Ui::refresh() {
-  const View& v = view();
-  if (v.is_list()) {
-    std::vector<std::string> stale;  // merged/closed PRs never change again
-    for (auto& u : list_urls(v))
-      if (auto c = cache.find(u); c == cache.end() || c->second.state == "OPEN") stale.push_back(u);
-    request_urls(stale);
-  } else {
-    request_search(effective(v));
-  }
-  if (last_refresh == 0)  // the first time: every search view, so each tab has its count
-    for (auto& t : tabs)
-      if (!t.v.is_list()) request_search(effective(t.v));
-  if (plugins) plugins->refresh();
-  requested_full.clear();  // stubs whose fill failed get another try
-  ++column_gen;
-  last_refresh = now();
-}
-
-// nullopt when this view has no data yet (search never answered).
-std::optional<std::vector<Pr>> Ui::rows(size_t vi, std::string* err) const {
-  const View& v = tabs[vi].v;
-  std::string q = effective(v);
-  std::vector<Pr> out;
-  if (!v.is_list()) {
-    auto it = results.find(q);
-    if (it == results.end()) return std::nullopt;
-    for (auto& u : it->second)
-      if (auto c = cache.find(u); c != cache.end()) out.push_back(c->second);
-  } else {
-    std::string e;
-    auto preds = parse_local(q, e);
-    if (!preds) {
-      if (err) *err = e;
-      return out;
-    }
-    for (auto& u : list_urls(v))
-      if (auto c = cache.find(u); c != cache.end() && !c->second.partial && local_match(c->second, *preds, viewer))
-        out.push_back(c->second);
-  }
-  Sort sort = v.sort_or_default();
-  if (sort == Sort::List && v.is_list() && !out.empty()) {  // non-empty: the plugin exists
-    // Plugin order first; PRs it gave no order go last, newest update first.
-    sort_prs(out, Sort::Updated);
-    const auto& prs = live[static_cast<size_t>(plugin_index(v.plugin))].prs;
-    auto key = [&](const Pr& p) {
-      auto it = prs.find(p.url);
-      return it != prs.end() && it->second.order ? *it->second.order : -HUGE_VAL;
-    };
-    std::stable_sort(out.begin(), out.end(), [&](const Pr& a, const Pr& b) { return key(a) > key(b); });
-  } else {
-    sort_prs(out, sort == Sort::List ? Sort::Updated : sort);
-  }
-  return out;
-}
-
-// Stubs on the active list that could match once their full fields are
-// known: judged on the predicates a stub can answer (state, org, repo).
-std::vector<std::string> Ui::stubs_to_fill() const {
-  const View& v = tabs[active].v;
-  std::string e;
-  auto preds = v.is_list() ? parse_local(effective(v), e) : std::nullopt;
-  if (!preds) return {};
-  std::vector<Pred> known;
-  for (auto& p : *preds)
-    if (p.key == "org" || p.key == "user" || p.key == "repo" || p.key == "recent" ||
-        (p.key == "is" && p.value != "draft"))
-      known.push_back(p);
-  std::vector<std::string> out;
-  for (auto& u : list_urls(v))
-    if (auto c = cache.find(u);
-        c != cache.end() && c->second.partial && !requested_full.count(u) && local_match(c->second, known, viewer))
-      out.push_back(u);
-  return out;
-}
-
-Seen Ui::seen() const {
-  Seen s;
-  s.owners = owners;
-  s.repos = repos;
-  for (auto& [url, p] : cache) {
-    if (p.partial) continue;
-    for (auto& l : p.labels) ++s.labels[l];
-    if (!p.author.empty()) ++s.authors[p.author];
-  }
-  return s;
-}
-
-std::vector<std::string> Ui::plugin_lists(const std::string& plugin) const {
-  std::set<std::string> out;
-  if (int pi = plugin_index(plugin); pi >= 0)
-    for (auto& [url, info] : live[static_cast<size_t>(pi)].prs) out.insert(info.lists.begin(), info.lists.end());
-  return {out.begin(), out.end()};
-}
-
-// -- plugins -------------------------------------------------------------------
-
-int Ui::plugin_index(const std::string& name) const {
-  for (size_t i = 0; i < cfg.plugins.size(); ++i)
-    if (cfg.plugins[i].name == name) return static_cast<int>(i);
-  return -1;
-}
-
-void Ui::on_plugin_line(size_t i, const std::string& line, bool is_err) {
-  if (is_err) {
-    live[i].last_stderr = line;
-    flash(cfg.plugins[i].name + ": " + line, 10);  // e.g. a bad setting
-    return;
-  }
-  if (!running[i]) {  // first line after a restart: forget "exited"
-    running[i] = true;
-    live[i].health.clear();
-    live[i].health_text.clear();
-  }
-  PluginState& st = one_shot(i) ? pending[i] : live[i];
-  bool was_ok = st.health == "ok";
-  std::string url = apply_line(st, line);
-  if (!was_ok && st.health == "ok") notify_approved();  // ready (again): catch it up
-  if (auto it = st.prs.find(url); it != st.prs.end() && !it->second.tags.empty() && !it->second.tags[0].glyph.empty())
-    last_glyph[i] = it->second.tags[0].glyph;
-  if (one_shot(i)) {  // health shows live even while the PRs wait for the run to end
-    live[i].health = st.health;
-    live[i].health_text = st.health_text;
-    live[i].bad_lines = st.bad_lines;
-  }
-  if (!url.empty() && !cache.count(url) && !requested.count(url) && !st.prs[url].lists.empty())
-    request_urls({url});
-}
-
-void Ui::on_plugin_exit(size_t i, int code) {
-  last_code[i] = code;
-  std::string err = live[i].last_stderr;
-  if (one_shot(i)) {
-    PluginState next = std::move(pending[i]);
-    next.last_stderr = err;
-    live[i] = std::move(next);
-    pending[i] = PluginState{};
-    for (auto& [url, info] : live[i].prs)
-      if (!info.lists.empty() && !cache.count(url) && !requested.count(url)) request_urls({url});
-  } else {
-    running[i] = false;
-    live[i] = PluginState{};  // it re-sends what is still true on restart
-    live[i].last_stderr = err;
-    live[i].health = "exited";
-    live[i].health_text = "exit code " + std::to_string(code);
-  }
-}
-
-// Delivers new approvals (anton-slkx swaps your 👀 for 👍) to plugins that
-// are up; the rest wait for the plugin's next health ok.
-void Ui::notify_approved() {
-  if (!plugins) return;
-  for (size_t i = 0; i < approvals.size(); ++i) {
-    if (live[i].health != "ok") continue;
-    for (auto it = approvals[i].begin(); it != approvals[i].end();)
-      it = plugins->send(i, nlohmann::json({{"event", "approved"}, {"pr", *it}}).dump()) ? approvals[i].erase(it)
-                                                                                          : std::next(it);
-  }
-}
-
-std::vector<Ui::PluginKey> Ui::plugin_keys() const {
-  std::vector<PluginKey> out;
-  for (size_t i = 0; i < cfg.plugins.size(); ++i)
-    if (!one_shot(i))  // one-shot plugins have no stdin
-      for (auto& a : live[i].actions) out.push_back({i, a});
-  return out;
-}
-
-// A plugin-declared key on a PR. False if no plugin claims it.
-bool Ui::plugin_action(const std::string& key, const std::string& url, const std::string& file, int line) {
-  for (auto& [i, a] : plugin_keys()) {
-    if (a.key != key) continue;
-    if (url.empty()) return true;
-    std::string pr = url;
-    if (auto c = cache.find(url); c != cache.end()) pr = c->second.repo + "#" + std::to_string(c->second.number);
-    nlohmann::json msg = {{"action", a.id}, {"pr", url}};
-    std::string what = a.label.empty() ? a.id : a.label;
-    if (a.line && !file.empty()) {
-      msg["file"] = file;
-      what = "run " + file;
-      if (line > 0) {
-        msg["line"] = line;
-        what += ":" + std::to_string(line);
-      }
-    }
-    bool ok = plugins && plugins->send(i, msg.dump());
-    flash(cfg.plugins[i].name + ": " + (ok ? what + " — " + pr : "not running"));
-    return true;
-  }
-  return false;
-}
-
-bool Ui::plugin_up(size_t i) const {
-  if (live[i].health == "error") return false;
-  return one_shot(i) ? last_code[i] == 0 : running[i] && live[i].health != "exited";
-}
-
-std::optional<Status> Ui::status_of(const std::string& url) const {
-  for (auto& st : live)
-    if (auto it = st.prs.find(url); it != st.prs.end() && it->second.status) return it->second.status;
-  return std::nullopt;
-}
-
-std::vector<Tag> Ui::tags_of(const std::string& url) const {
-  std::vector<Tag> out;
-  for (auto& st : live)
-    if (auto it = st.prs.find(url); it != st.prs.end())
-      out.insert(out.end(), it->second.tags.begin(), it->second.tags.end());
-  return out;
-}
-
-std::vector<std::pair<std::string, std::string>> Ui::notes_of(const std::string& url) const {
-  std::vector<std::pair<std::string, std::string>> out;
-  for (size_t i = 0; i < live.size(); ++i)
-    if (auto it = live[i].prs.find(url); it != live[i].prs.end() && !it->second.note.empty())
-      out.emplace_back(cfg.plugins[i].name, it->second.note);
-  return out;
-}
-
-bool Ui::has_note(const std::string& url) const { return !notes_of(url).empty(); }
-
-// -- people, titles -------------------------------------------------------------
-
-std::string Ui::shown_title(const std::string& t) const {
-  return cfg.title_strip.empty() ? t : std::regex_replace(t, cfg.title_re, "");
-}
-
-const Person* Ui::person(const std::string& login) const {
-  auto it = cfg.people.find(lower(login));
-  return it != cfg.people.end() ? &it->second : nullptr;
-}
-
-// A Slack tag names someone by their Slack name: the person whose "name" it
-// is, or you.
-const Person* Ui::tag_person(const Tag& t) const {
-  if (t.text == "you") return person(viewer);
-  for (auto& [login, p] : cfg.people)
-    if (!p.name.empty() && lower(p.name) == lower(t.text)) return &p;
-  return nullptr;
 }
 
 Element Ui::paint(Element e, const Person* p) {
@@ -546,60 +145,6 @@ Element Ui::fit(const std::vector<Part>& parts, int w) {
   return hbox(std::move(out));
 }
 
-std::string Ui::who(const std::string& login) const {
-  const Person* p = person(login);
-  return p && !p->name.empty() ? p->name : login;
-}
-
-// -- views ---------------------------------------------------------------------
-
-// Its filters differ from what config.json has (or it was never saved).
-bool Ui::modified(size_t i) const {
-  const Tab& t = tabs[i];
-  if (!t.saved) return true;
-  const View& s = *t.saved;
-  return t.v.plugin != s.plugin || t.v.list != s.list || t.v.sort_or_default() != s.sort_or_default() ||
-         !same_query(with_scope(t.v.query, scope), s.query);
-}
-
-// Chips and the query row both end here. The org/repo scope is session-wide
-// (01-anton.md): while one is set, the scope qualifiers in q become it.
-void Ui::apply_query(const std::string& q) {
-  if (!scope.empty()) {
-    std::vector<std::string> sc;
-    for (auto& t : tokenize(q))
-      if (t[0] != '-' && kScopeKeys.count(qualifier_key(t))) sc.push_back(t);
-    scope = join(sc);
-  }
-  view().query = q;
-  selected = list_top = 0;
-  refresh();
-}
-
-void Ui::set_sort(Sort s) {
-  view().sort = s;
-  selected = list_top = 0;
-}
-
-std::vector<View> Ui::saved_views() const {
-  std::vector<View> out = offscreen;
-  for (auto& t : tabs)
-    if (t.saved) out.push_back(*t.saved);
-  return out;
-}
-
-bool Ui::write_config(const std::string& done) {
-  Config c = cfg;
-  c.views = saved_views();
-  if (std::string err = save_config(c); !err.empty()) {
-    flash(err, 10, true);
-    return false;
-  }
-  cfg.views = c.views;
-  if (!done.empty()) flash(done);
-  return true;
-}
-
 void Ui::save_view(size_t i, bool named) {
   if (!tabs[i].saved && !named) {  // never saved: it needs a name of its own first
     prompt("Save view as", tabs[i].v.name, "the tab's name; saved to config.json",
@@ -610,12 +155,7 @@ void Ui::save_view(size_t i, bool named) {
            });
     return;
   }
-  View s = tabs[i].v;
-  s.query = with_scope(s.query, scope);
-  auto old = tabs[i].saved;
-  tabs[i].saved = s;
-  if (!write_config("saved " + s.name + " to config.json")) tabs[i].saved = old;
-  else tabs[i].v = s;
+  commit_view(i);
 }
 
 void Ui::save_as_prompt(size_t i) {
@@ -630,123 +170,9 @@ void Ui::save_as_prompt(size_t i) {
          });
 }
 
-void Ui::save_as_new(size_t i, const std::string& name) {
-  Tab t{tabs[i].v, std::nullopt};
-  t.v.name = name;
-  t.v.query = with_scope(t.v.query, scope);
-  t.saved = t.v;
-  if (tabs[i].saved) tabs[i].v = *tabs[i].saved;  // the changes move to the new view
-  tabs.insert(tabs.begin() + static_cast<long>(i) + 1, t);
-  active = i + 1;
-  selected = list_top = 0;
-  write_config("saved " + name + " to config.json");
-  refresh();
-}
-
-// Back to what config.json has. The org/repo scope goes too: it's what
-// keeps every tab modified while it's set.
-void Ui::revert_view(size_t i) {
-  if (!tabs[i].saved) return;
-  tabs[i].v = *tabs[i].saved;
-  scope.clear();
-  selected = list_top = 0;
-  refresh();
-}
-
-static std::string unique_name(const std::vector<Ui::Tab>& tabs, const std::string& base) {
-  for (int n = 1;; ++n) {
-    std::string name = n == 1 ? base : base + " " + std::to_string(n);
-    if (std::none_of(tabs.begin(), tabs.end(), [&](const Ui::Tab& t) { return t.v.name == name; })) return name;
-  }
-}
-
 void Ui::new_view() {
-  tabs.push_back({View{unique_name(tabs, "New view"), "is:open", "", "", {}}, std::nullopt});
-  switch_view(tabs.size() - 1);
+  add_view();
   start_query();
-}
-
-void Ui::duplicate_view(size_t i) {
-  Tab t{tabs[i].v, std::nullopt};
-  t.v.name = unique_name(tabs, t.v.name + " copy");
-  t.v.query = with_scope(t.v.query, scope);
-  t.saved = t.v;
-  tabs.insert(tabs.begin() + static_cast<long>(i) + 1, t);
-  if (active > i) ++active;
-  write_config("duplicated as " + t.v.name);
-}
-
-void Ui::move_view(size_t i, int by) {
-  long j = static_cast<long>(i) + by;
-  if (j < 0 || j >= static_cast<long>(tabs.size())) return;
-  std::swap(tabs[i], tabs[static_cast<size_t>(j)]);
-  if (active == i) active = static_cast<size_t>(j);
-  else if (active == static_cast<size_t>(j)) active = i;
-  write_config();
-}
-
-void Ui::delete_view(size_t i) {
-  if (tabs.size() == 1) return flash("anton needs one view; this is the last", 3, true);
-  std::string name = tabs[i].v.name;
-  tabs.erase(tabs.begin() + static_cast<long>(i));
-  if (cfg.start_view == name) cfg.start_view.clear();
-  if (active > i || active == tabs.size()) --active;
-  selected = list_top = 0;
-  write_config("deleted " + name);
-  refresh();
-}
-
-std::string Ui::rename_view(size_t i, const std::string& raw) {
-  std::string name = printable(raw);
-  if (name.empty()) return "a view needs a name";
-  for (size_t j = 0; j < tabs.size(); ++j)
-    if (j != i && tabs[j].v.name == name) return "there's a view named " + name + " already";
-  if (name == tabs[i].v.name) return "";
-  // ponytail: the file's entry is found by name, so a rename drops keys anton
-  // doesn't know from that view's entry; carry an original name if one appears.
-  if (cfg.start_view == tabs[i].v.name) cfg.start_view = name;
-  tabs[i].v.name = name;
-  if (tabs[i].saved) {
-    tabs[i].saved->name = name;
-    write_config("renamed to " + name);
-  }
-  return "";
-}
-
-void Ui::switch_view(size_t i) {
-  if (i >= tabs.size() || i == active) return;
-  active = i;
-  selected = list_top = 0;
-  refresh();
-}
-
-void Ui::open(const std::string& url) {
-  std::thread([url] { run({"gh", "pr", "view", "--web", url}); }).detach();
-  flash("opening " + url);
-}
-
-void Ui::copy(const std::string& s) {
-  std::thread([this, s] {
-    for (auto argv : std::vector<std::vector<std::string>>{{"pbcopy"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"}})
-      if (run(argv, s).code == 0) return post([this] { flash("copied"); });
-    post([this] { flash("no clipboard tool (pbcopy, wl-copy, xclip)"); });
-  }).detach();
-}
-
-void Ui::flash(const std::string& s, int secs, bool bad) {
-  notice = s;
-  notice_until = now() + secs;
-  notice_bad = bad;
-}
-
-// At startup and every 15 min (every merge is a release), until there's
-// something to say. Detached: anton _Exits on quit, so nothing joins it.
-void Ui::check_update() {
-  last_update_check = now();
-  std::thread([this, install = cfg.auto_update] {
-    std::string note = self_update(install);
-    if (!note.empty()) post([this, note] { update_note = note; });
-  }).detach();
 }
 
 // -- hits and menus ------------------------------------------------------------
@@ -1305,13 +731,10 @@ Element Ui::render_menu(Menu& m, size_t depth, std::function<void(int)> pick, st
 Element Ui::render() {
   hits.clear();
   controls.clear();
-  if (now() - last_refresh >= cfg.refresh_seconds) refresh();
-  if (now() - last_watch >= cfg.watch_seconds) poll_watched();
-  if (update_note.empty() && now() - last_update_check >= 15 * 60) check_update();
+  tick();
   std::string view_err;
   auto rs = rows(active, &view_err).value_or(std::vector<Pr>{});
   selected = std::clamp(selected, 0, std::max(0, static_cast<int>(rs.size()) - 1));
-  request_full(stubs_to_fill());
 
   Elements layers;
   if (mode == Mode::Settings) layers.push_back(render_settings());
@@ -2166,10 +1589,7 @@ void Ui::act(const std::string& key, const Pr* cur) {
     while (s == Sort::List && !view().is_list());
     set_sort(s);
   } else if (key == "x") {
-    scope.clear();
-    view().query = remove_qualifiers(view().query, kScopeKeys);
-    selected = list_top = 0;
-    refresh();
+    clear_scope();
   } else if (cur) {
     plugin_action(key, cur->url);
   }
@@ -2212,23 +1632,13 @@ void run_ui(Config cfg) {
   auto ui = std::make_unique<Ui>(std::move(cfg));
   Ui* u = ui.get();
 
-  std::thread([u] { u->worker(); }).detach();
+  u->start();
   std::thread([u] {  // ticks the clock: "↻ 40s ago" and the auto refresh
     for (;;) {
       std::this_thread::sleep_for(std::chrono::seconds(1));
       u->screen.PostEvent(Event::Custom);
     }
   }).detach();
-
-  if (!u->cfg.plugins.empty()) {
-    u->plugins = std::make_unique<Plugins>(
-        u->cfg.plugins,
-        [u](size_t i, const std::string& line, bool is_err) {
-          u->post([u, i, line, is_err] { u->on_plugin_line(i, line, is_err); });
-        },
-        [u](size_t i, int code) { u->post([u, i, code] { u->on_plugin_exit(i, code); }); });
-    u->plugins->start();
-  }
 
   auto root = Renderer([u] { return u->render(); }) | CatchEvent([u](Event e) { return u->on_event(e); });
   // Ctrl-C is a key event (handled above) so the loop exits normally and

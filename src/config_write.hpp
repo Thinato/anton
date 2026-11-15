@@ -57,6 +57,28 @@ inline std::string merged_config(const std::string& existing, const Config& c, s
         c.green_below == d.green_below && c.red_from == d.red_from);
   }
 
+  // anton-gui's settings, by the same rule one level down: a key is set
+  // when the file has it or it's off its default.
+  {
+    const GuiPrefs& g = c.gui;
+    const GuiPrefs dg;
+    oj gui = j.contains("gui") && j["gui"].is_object() ? j["gui"] : oj::object();
+    auto sub = [](oj& o, const char* key, const oj& v, bool is_default) {
+      if (o.contains(key) || !is_default) o[key] = v;
+    };
+    sub(gui, "theme", g.theme, g.theme == dg.theme);
+    sub(gui, "font_size", g.font_size, g.font_size == dg.font_size);
+    sub(gui, "code_font", g.code_font, g.code_font == dg.code_font);
+    sub(gui, "density", g.density, g.density == dg.density);
+    oj panes = gui.contains("panes") && gui["panes"].is_object() ? gui["panes"] : oj::object();
+    sub(panes, "views", g.views, g.views == dg.views);
+    sub(panes, "preview", g.preview, g.preview == dg.preview);
+    sub(panes, "run_log", g.run_log, g.run_log == dg.run_log);
+    sub(panes, "status_bar", g.status_bar, g.status_bar == dg.status_bar);
+    if (!panes.empty()) gui["panes"] = panes;
+    if (!gui.empty()) j["gui"] = gui;
+  }
+
   // An entry already in the file under the same name keeps the keys anton
   // doesn't know (a command column's command, above all).
   auto old_entry = [&](const char* list, const std::string& name) {
