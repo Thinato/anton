@@ -134,7 +134,7 @@ kinds, since `org:` and `repo:` are in the local subset.
   list slack · code-review ▾   state open + merged 24h ✕   review approved ✕   + filter       sort list order ▾
  / recent:24h review:approved                  ● Code review changed   S Save   Save as new view   Revert
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  REPO   SIZE        STATE        AGE ↓ AUTHOR   TAGS          TITLE
+  REPO   SIZE        STATE       ↓AGE  AUTHOR   TAGS          TITLE
 ▌ core    +331 -61   💬 Ready?     30m  lucas                  feat(billing): invoices list each seat…   ┃
   core    +260 -20   approved ✓    30m  lucas                  feat(billing): a downgrade waits for t…   │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ nearest ANSI color; the selected row is then inverted rather than tinted):
   Rename, duplicate, move and delete write config.json right away.
 - **The list** (columns below), with a scrollbar when it doesn't fit. A
   column header that is a sort key (REPO, SIZE, AGE = created) sorts by it
-  on click and shows `↓` while it's the sort.
+  on click and shows `↓` while it's the sort (`SIZE ↓`, `↓AGE`).
 - **Detail**, three lines for the selected PR: `repo#number` and the full
   title; author · opened when · `+a −d in N files` · checks · review state ·
   labels, with the URL on the right (click opens it); then what plugins say

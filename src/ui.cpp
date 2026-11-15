@@ -1769,7 +1769,7 @@ Element Ui::render_table(const std::vector<Pr>& rs, int height, bool live) {
                 : n == "number"     ? cell_right("#", num_w)
                 : n == "size"       ? cell("SIZE" + arrow, 11)
                 : n == "state"      ? cell("STATE", 12)
-                : n == "age"        ? cell_right("AGE" + arrow, sorted ? 6 : 4)  // into its gap
+                : n == "age"        ? cell_right(sorted ? "↓AGE" : "AGE", 4)  // right-aligned: the arrow goes first
                 : n == "author"     ? cell("AUTHOR", 12)
                 : n == "tags"       ? cell("TAGS", tags_w)
                                     : text("TITLE") | flex;
@@ -1777,7 +1777,7 @@ Element Ui::render_table(const std::vector<Pr>& rs, int height, bool live) {
     if (live && by != Sort::List) h = clickable(h, [this, by] { set_sort(by); });
     head.push_back(h);
     flex_col = flex_col || n == "title";
-    head.push_back(text(std::string(static_cast<size_t>(gap(*c) - (n == "age" && sorted ? 2 : 0)), ' ')));
+    head.push_back(text(std::string(static_cast<size_t>(gap(*c)), ' ')));
   }
   if (!flex_col) head.push_back(filler());
   head.push_back(text(" "));
