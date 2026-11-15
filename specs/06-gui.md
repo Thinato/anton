@@ -288,7 +288,7 @@ then the reader.
 anton-gui --screenshot out.png --screen list|reader|settings|palette \
           [--theme dark|light] [--pr N] [--file F] [--size WxH] [--scale S] \
           [--palette-query Q] [--settings-page general|appearance|views|plugins] \
-          [--press KEY [--wait SECONDS]]
+          [--press KEY [--wait SECONDS]] [--keys 'j j <Enter> J r']
 ```
 
 It opens a hidden window, renders into an offscreen framebuffer at
@@ -297,7 +297,9 @@ rows (then the selected PR's description; in the reader, its body and
 files), sets the screen up (`--pr` selects that PR, switching to a view
 that has it; `--file` opens its tab by path, tab name or path tail;
 `--press` sends a plugin's key, like `T`, and waits `--wait` seconds for
-it), lets it settle a second and a half, writes the PNG (stb_image_write)
+it; `--keys` types keys, a few frames apart: characters, or `<Enter>`,
+`<Esc>`, `<Tab>`, `<Up>`, `<Down>`, `<Ctrl-K>`, `<Ctrl-,>`, so a key path
+can be seen without a person at the keyboard), lets it settle a second and a half, writes the PNG (stb_image_write)
 and exits. 30 seconds without the data, it captures what's there and says
 so. It reads no layout file and writes neither the layout nor config.json,
 so a screenshot is always the default layout; `--theme` holds for that

@@ -134,7 +134,7 @@ inline std::string strip_emoji(const std::string& s) {
     if (i + n > s.size()) n = 1;
     std::string ch = s.substr(i, n);
     bool drop = n == 4 || ch == "\xEF\xB8\x8F" /* U+FE0F */ || ch == "\xE2\x80\x8D" /* U+200D */;
-    if (!drop) out += ch;
+    if (!drop && !(ch == " " && !out.empty() && out.back() == ' ')) out += ch;  // "toggle 👀 reviewing": one space
     i += n;
   }
   size_t a = out.find_first_not_of(' '), b = out.find_last_not_of(' ');

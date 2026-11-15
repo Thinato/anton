@@ -31,7 +31,7 @@ const char* kUsage =
     "                 [--screenshot out.png --screen list|reader|settings|palette\n"
     "                  [--theme dark|light] [--pr N] [--file F] [--size WxH] [--scale S]\n"
     "                  [--palette-query Q] [--settings-page general|appearance|views|plugins]\n"
-    "                  [--press KEY [--wait SECONDS]]]\n"
+    "                  [--press KEY [--wait SECONDS]] [--keys 'j j <Enter> J r']]\n"
     "\n"
     "  --query Q       open a single ad-hoc view instead of the configured ones\n"
     "  --no-plugins    start without plugins\n"
@@ -39,12 +39,15 @@ const char* kUsage =
     "  --screenshot    render a screen offscreen once its data is in, write it as a PNG, exit\n"
     "  --press KEY     with --screenshot: press a plugin's key first (T: run the specs), shoot\n"
     "                  --wait seconds later (4)\n"
+    "  --keys K        with --screenshot: type keys first, space-separated: a character, or\n"
+    "                  <Enter> <Esc> <Tab> <Up> <Down> <Ctrl-K> <Ctrl-,>\n"
     "\n"
     "config: $XDG_CONFIG_HOME/anton/config.json (default ~/.config/anton/config.json)\n"
     "layout: $XDG_CONFIG_HOME/anton/gui-layout.ini\n";
 
 struct Shot {
   std::string out, screen = "list", theme, file, palette_query, settings_page = "appearance", press;
+  std::vector<std::string> keys;  // --keys, one a few frames apart
   int pr = 0, w = 1440, h = 900;
   double wait = 4;
   float scale = 1;
@@ -171,6 +174,14 @@ bool parse_args(int argc, char** argv, anton::Config& cfg, Shot& shot, int& exit
       shot.palette_query = value(i, "--palette-query");
     } else if (a == "--press") {
       shot.press = value(i, "--press");
+    } else if (a == "--keys") {
+      std::string v = value(i, "--keys");
+      for (size_t at = 0; at < v.size();) {
+        size_t sp = v.find(' ', at);
+        if (std::string k = v.substr(at, sp == std::string::npos ? std::string::npos : sp - at); !k.empty()) shot.keys.push_back(k);
+        if (sp == std::string::npos) break;
+        at = sp + 1;
+      }
     } else if (a == "--wait") {
       shot.wait = std::atof(value(i, "--wait").c_str());
     } else if (a == "--settings-page") {
@@ -410,7 +421,29 @@ int main(int argc, char** argv) {
           g->plugin_action(shot.press, url, ft && ft->spec ? ft->path : "");
         }
       }
-      if ((ready_at && secs() - ready_at > settle) || timed_out) {
+      if (ready_at && secs() - ready_at > 1.0 && !shot.keys.empty()) {  // type --keys, one every few frames
+        static int frame = 0;
+        if (++frame % 4 == 0) {
+          std::string key = shot.keys.front();
+          shot.keys.erase(shot.keys.begin());
+          auto tap = [&](ImGuiKey k, bool ctrl = false) {
+            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+            io.AddKeyEvent(k, true);
+            io.AddKeyEvent(k, false);
+            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, false);
+          };
+          if (key == "<Enter>") tap(ImGuiKey_Enter);
+          else if (key == "<Esc>") tap(ImGuiKey_Escape);
+          else if (key == "<Tab>") tap(ImGuiKey_Tab);
+          else if (key == "<Up>") tap(ImGuiKey_UpArrow);
+          else if (key == "<Down>") tap(ImGuiKey_DownArrow);
+          else if (key == "<Ctrl-K>") tap(ImGuiKey_K, true);
+          else if (key == "<Ctrl-,>") tap(ImGuiKey_Comma, true);
+          else for (char c : key) io.AddInputCharacter(static_cast<unsigned>(static_cast<unsigned char>(c)));
+        }
+        ready_at = secs() - 1.0;  // the settling starts after the last key
+      }
+      if ((ready_at && secs() - ready_at > settle && shot.keys.empty()) || timed_out) {
         if (timed_out) std::fprintf(stderr, "anton-gui: --screenshot: data didn't arrive in 30s; capturing what's there\n");
         gl.Viewport(0, 0, fw, fh);
         gl.ClearColor(0, 0, 0, 1);

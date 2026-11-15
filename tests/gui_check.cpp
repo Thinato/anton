@@ -62,7 +62,7 @@ int main() {
 
   // emoji the fonts can't draw go; symbols stay
   assert(strip_emoji("👀 paz") == "paz" && strip_emoji("⚙ queued") == "⚙ queued" && strip_emoji("✓ 14") == "✓ 14");
-  assert(strip_emoji("❤️ x") == "❤ x" && strip_emoji("🧪") == "");
+  assert(strip_emoji("❤️ x") == "❤ x" && strip_emoji("🧪") == "" && strip_emoji("toggle 👀 reviewing") == "toggle reviewing");
   assert(row_height("compact") < row_height("comfortable"));
 
   // results off marks: glyph first, level otherwise

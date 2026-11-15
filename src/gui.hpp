@@ -94,6 +94,7 @@ struct Gui : Core {
   void ask_name(Ask what, size_t view);
   void name_modal();
   void view_menu(size_t i);  // a view's context menu items
+  void modals();
 
   // -- the reader ----------------------------------------------------------------------
   std::string jump_path;  // scroll this doc to source line jump_src on the next frame

@@ -644,6 +644,7 @@ void Gui::frame() {
   if (settings_open) settings_window();
   else settings_shown = false;
   if (palette_open) palette();
+  modals();
   keys();
   ImGui::PopFont();
 }

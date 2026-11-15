@@ -88,7 +88,6 @@ void Gui::ask_name(Ask what, size_t i) {
   ask_view = i;
   ask_err.clear();
   ask_buf = what == Ask::SaveAs ? tabs[i].v.name + " copy" : tabs[i].v.name;
-  ImGui::OpenPopup("##name");
 }
 
 void Gui::name_modal() {
@@ -253,7 +252,12 @@ void Gui::views_pane() {
     ImGui::PopFont();
   }
   ImGui::PopStyleVar();
-  if (confirm_delete >= 0) ImGui::OpenPopup("##delete");
+  ImGui::End();
+}
+
+// A view's name asked for, or its delete confirmed: modals over everything.
+void Gui::modals() {
+  if (confirm_delete >= 0 && !settings_open && !ImGui::IsPopupOpen("##delete")) ImGui::OpenPopup("##delete");
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * k(), 14 * k()));
   if (ImGui::BeginPopupModal("##delete", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
     size_t i = static_cast<size_t>(std::max(0, confirm_delete));
@@ -276,7 +280,6 @@ void Gui::views_pane() {
   ImGui::PopStyleVar();
   if (ask != Ask::None && !ImGui::IsPopupOpen("##name")) ImGui::OpenPopup("##name");
   name_modal();
-  ImGui::End();
 }
 
 // -- the filter bar ------------------------------------------------------------------

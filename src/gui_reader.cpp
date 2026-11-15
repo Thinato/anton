@@ -26,6 +26,7 @@ std::vector<Doc> Gui::docs() const {
 // Parsed once per text (keyed by its hash): md4c needn't run every frame.
 const std::vector<md::Block>& Gui::blocks_of(const std::string& text) {
   size_t h = std::hash<std::string>{}(text);
+  if (parsed.size() > 256) parsed.clear();  // notes change as runs go: don't keep every version
   auto it = parsed.find(h);
   if (it == parsed.end()) it = parsed.emplace(h, md::blocks(text, today())).first;
   return it->second;
