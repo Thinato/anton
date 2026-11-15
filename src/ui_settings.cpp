@@ -105,17 +105,23 @@ Element Ui::render_settings() {
   int W = term.dimx, H = term.dimy, pane_w = W - 24;
   Elements L;  // the page, one element per row
   auto row = [&] { return static_cast<int>(L.size()); };
+  auto focus_then = [this](int id, std::function<void()> act) {  // a click also moves the focus there
+    return [this, id, act] {
+      set_focus = id;
+      act();
+    };
+  };
   auto focused = [&](Element e, int id) {
     return id == set_focus ? (truecolor() ? e | bg(Pal::MenuSel) : e | inverted) : e;
   };
   auto field = [&](const std::string& v, int w, int id, std::function<void()> act) {
-    return clickable(focused(txt(" " + padded(clipped(v, w), w) + " ") | bg(Pal::Chip), id), std::move(act));
+    return clickable(focused(txt(" " + padded(clipped(v, w), w) + " ") | bg(Pal::Chip), id), focus_then(id, act));
   };
-  auto dropdown = [&](const std::string& v, int id, std::function<void()> act) {
-    return clickable(focused(hbox({txt(" " + v + " "), txt("▾ ", Pal::Dim)}) | bg(Pal::Chip), id), std::move(act));
+  auto dropdown = [&](const std::string& v, int id, std::function<void()> act, const std::string& key) {  // key: its menu hangs there
+    return clickable(focused(hbox({txt(" " + v + " "), txt("▾ ", Pal::Dim)}) | bg(Pal::Chip), id) | reflect(anchors[key]), focus_then(id, act));
   };
   auto check = [&](bool on, const std::string& label, int id, std::function<void()> act) {
-    return clickable(focused(hbox({txt(on ? "[x]" : "[ ]", on ? Pal::Accent : Pal::Dim), txt(" " + label)}), id), std::move(act));
+    return clickable(focused(hbox({txt(on ? "[x]" : "[ ]", on ? Pal::Accent : Pal::Dim), txt(" " + label)}), id), focus_then(id, act));
   };
   auto title = [&](const std::string& t) { L.push_back(txt(t, Pal::Accent, true)); };
   auto hr = [&] {
@@ -172,8 +178,8 @@ Element Ui::render_settings() {
       Menu m;
       m.title = "start on";
       m.w = 34;
-      m.y = 8;
-      m.x = 45;
+      m.y = anchors["set:start"].y_max + 1;
+      m.x = anchors["set:start"].x_min;
       m.items = [this] {
         std::vector<MenuItem> items;
         bool first = true;
@@ -193,7 +199,7 @@ Element Ui::render_settings() {
       push_menu(m);
     };
     id = control(pick_start, nullptr, row());
-    L.push_back(hbox({txt(padded("Start on", 22)), dropdown(start.empty() ? "(none saved)" : start, id, pick_start),
+    L.push_back(hbox({txt(padded("Start on", 22)), dropdown(start.empty() ? "(none saved)" : start, id, pick_start, "set:start"),
                       txt("   or pass --query for a one-off view", Pal::Dim)}));
     L.push_back(text(""));
     auto toggle_mouse = [this] {
@@ -327,8 +333,8 @@ Element Ui::render_settings() {
         Menu m;
         m.title = "plugin";
         m.w = 30;
-        m.x = 34;
-        m.y = 12;
+        m.x = anchors["set:plugin"].x_min;
+        m.y = anchors["set:plugin"].y_max + 1;
         m.items = [this, vi] {
           std::vector<MenuItem> items;
           for (auto& p : cfg.plugins) {
@@ -345,8 +351,8 @@ Element Ui::render_settings() {
         Menu m;
         m.title = "list";
         m.w = 36;
-        m.x = 50;
-        m.y = 12;
+        m.x = anchors["set:list"].x_min;
+        m.y = anchors["set:list"].y_max + 1;
         m.input = true;
         m.placeholder = "a list name";
         m.items = [this, vi] {
@@ -371,8 +377,8 @@ Element Ui::render_settings() {
       };
       id = control(pick_plugin, nullptr, row());
       int id2 = control(pick_list, nullptr, row());
-      L.push_back(hbox({txt(padded("Plugin", 11), Pal::Dim), dropdown(v.plugin, id, pick_plugin), txt("   list ", Pal::Dim),
-                        dropdown(v.list, id2, pick_list), txt("   lists the plugin offers right now", Pal::Faint)}));
+      L.push_back(hbox({txt(padded("Plugin", 11), Pal::Dim), dropdown(v.plugin, id, pick_plugin, "set:plugin"), txt("   list ", Pal::Dim),
+                        dropdown(v.list, id2, pick_list, "set:list"), txt("   lists the plugin offers right now", Pal::Faint)}));
     }
     L.push_back(text(""));
     auto filter = [this, vi] {
@@ -395,8 +401,8 @@ Element Ui::render_settings() {
       Menu m;
       m.title = "sort";
       m.w = 28;
-      m.x = 34;
-      m.y = 14;
+      m.x = anchors["set:sort"].x_min;
+      m.y = anchors["set:sort"].y_max + 1;
       m.items = [this, vi] {
         std::vector<MenuItem> items;
         for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo}) {
@@ -412,7 +418,7 @@ Element Ui::render_settings() {
       push_menu(m);
     };
     id = control(pick_sort, nullptr, row());
-    L.push_back(hbox({txt(padded("Sort", 11), Pal::Dim), dropdown(v.sort_or_default() == Sort::List ? "list order" : sort_name(v.sort_or_default()), id, pick_sort)}));
+    L.push_back(hbox({txt(padded("Sort", 11), Pal::Dim), dropdown(v.sort_or_default() == Sort::List ? "list order" : sort_name(v.sort_or_default()), id, pick_sort, "set:sort")}));
     L.push_back(text(""));
     L.push_back(text(""));
     auto dup = [this, vi] {
