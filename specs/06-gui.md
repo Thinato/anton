@@ -260,7 +260,9 @@ them and `config_write` keeps them, written only once off their defaults
 | `panes` | all `true` | `views`, `preview`, `run_log`, `status_bar` |
 
 Everything else (views, columns, people, plugins, refresh) is the TUI's
-and means the same.
+and means the same. A bad `gui` value doesn't stop either UI from
+starting: the `gui` keys fall back to their defaults and anton-gui says
+why in its status bar; the TUI ignores them.
 
 ## Keys
 

@@ -304,6 +304,7 @@ int main(int argc, char** argv) {
     };
     sigaction(sig, &sa, nullptr);
   }
+  if (!g->cfg.gui_error.empty()) g->flash(config_path() + ": " + g->cfg.gui_error + " (using the defaults)", 30, true);
   g->start();
 
   Gl gl{};

@@ -133,9 +133,14 @@ int main() {
     assert(parse_config(R"({"gui": {"theme": "light", "font_size": 40, "density": "compact",
                                     "panes": {"preview": false}}})", c).empty());
     assert(c.gui.theme == "light" && c.gui.font_size == 18 && c.gui.density == "compact" && !c.gui.preview && c.gui.views);
+    // a bad gui value doesn't stop the TUI: it's reported, and the gui keys default
     Config bad;
-    assert(parse_config(R"({"gui": {"theme": "blue"}})", bad) == "gui.theme: dark, light or system");
-    assert(!parse_config(R"({"gui": {"code_font": "Comic"}})", bad).empty());
+    assert(parse_config(R"({"gui": {"theme": "blue", "density": "compact"}, "refresh_seconds": 60})", bad).empty());
+    assert(bad.gui_error == "gui.theme: dark, light or system" && bad.gui == GuiPrefs{} && bad.refresh_seconds == 60);
+    Config bad2;
+    assert(parse_config(R"({"gui": {"font_size": "14"}})", bad2).empty() && bad2.gui_error.starts_with("gui: "));
+    Config bad3;
+    assert(parse_config(R"({"gui": {"code_font": "Comic"}})", bad3).empty() && !bad3.gui_error.empty());
 
     std::string err;
     Config d;
