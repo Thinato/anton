@@ -86,6 +86,14 @@ TITLES = {
 }
 
 
+# GitHub labels, for the filter bar's label chips.
+LABELS = {
+    4812: ["onboarding"], 4802: ["sso", "needs-design"], 4828: ["bug", "ui"], 4830: ["search"],
+    4831: ["bug", "mobile"], 4805: ["bug"], 4801: ["performance"], 4821: ["payments", "api"],
+    4814: ["needs-design"], 4795: ["needs-design", "dashboard"], 4796: ["ci"], 4809: ["bug"],
+}
+
+
 # What an LLM reviewer plugin would attach (`n` opens it).
 NOTES = {
     4812: """## Review: skip the team step for single-seat plans
@@ -271,6 +279,8 @@ def node(pr):
         "reviewDecision": {"approved": "APPROVED", "queued": "APPROVED", "ready": "APPROVED",
                            "changes": "CHANGES_REQUESTED"}.get(state, "REVIEW_REQUIRED"),
         "mergeable": "CONFLICTING" if state == "conflict" else "MERGEABLE",
+        "changedFiles": max(1, (add + dele) // 60),
+        "labels": {"nodes": [{"name": l} for l in LABELS.get(num, [])]},
         "repository": {"nameWithOwner": f"acme/{repo}", "owner": {"login": "acme"}},
         "author": {"login": author},
         "latestReviews": {"nodes": [{"author": {"login": ME}, "state": "APPROVED",
@@ -311,6 +321,18 @@ def gh(args):
         def hit(pr):
             if pr[6].startswith("merged") and "is:open" in q:
                 return False
+            if "is:merged" in q.split() and not pr[6].startswith("merged"):
+                return False
+            for tok in q.split():  # label:x, -label:x, author:login, repo:acme/x
+                neg, tok = tok.startswith("-"), tok.lstrip("-")
+                key, _, val = tok.partition(":")
+                val = val.strip('"')
+                if key == "label" and (val in LABELS.get(pr[0], [])) == neg:
+                    return False
+                if key == "author" and val != "@me" and (pr[2] == val) == neg:
+                    return False
+                if key == "repo" and (f"acme/{pr[1]}" == val) == neg:
+                    return False
             if "author:@me" in q: return pr[2] == ME
             if "review-requested:@me" in q: return "rr" in pr[9]
             if "assignee:@me" in q: return "as" in pr[9]
@@ -348,7 +370,7 @@ def plugin():
         if len(line) > 1:
             out(line)
     out({"health": "ok"})
-    out({"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack"}]})
+    out({"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"}]})
     for _ in sys.stdin:  # stay up like the real plugin; ignore `v`
         pass
     time.sleep(10 ** 9)
@@ -356,7 +378,8 @@ def plugin():
 
 def temoc():
     """What anton-temoc says after `T` on 4812: one failure, a snoozed table,
-    an error, and the rest passing."""
+    an error, and the rest passing. Stays up and offers `T`, like the real
+    one; pressing it says the same again."""
     spec = "specs/onboarding.md"
     at = lambda start: spec_line(4812, spec, start)
     def mark(line, level, glyph, text=""):
@@ -377,14 +400,20 @@ def temoc():
         mark(at("| Solo | profile"), *ok),
         mark(at("| Team | profile"), *bad, "items: NullPointerException: plan.seats is null"),
     ]
-    print(json.dumps({
+    line = json.dumps({
         "pr": "https://github.com/acme/core/pull/4812",
         "tags": [{"glyph": "🧪", "text": "2 ✗ 5 ✓ 💤 1", "hint": "temoc at 3f9c2a1: 1 error, 1 failed, 5 passed"}],
         "note": f"temoc at `3f9c2a1`: 1 error, 1 failed, 5 passed, 1 snoozed\n\n**{spec}**: failed\n"
                 f"- `{spec}:{at('| Solo trial |')}` teamStep: expected skipped, got shown\n"
                 f"- `{spec}:{at('| Team | profile')}` items: NullPointerException: plan.seats is null\n",
         "marks": {"ref": HEAD, "lines": marks},
-    }, ensure_ascii=False), flush=True)
+    }, ensure_ascii=False)
+    print(line, flush=True)
+    print(json.dumps({"health": "ok"}), flush=True)
+    print(json.dumps({"actions": [{"id": "run", "key": "T", "label": "run the PR's temoc specs",
+                                   "button": "Run specs"}]}, ensure_ascii=False), flush=True)
+    for _ in sys.stdin:  # `T`: the same results again
+        print(line, flush=True)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,8 @@ add_executable(anton
   src/github.cpp
   src/plugins.cpp
   src/ui.cpp
+  src/ui_reader.cpp
+  src/ui_settings.cpp
   src/update.cpp
 )
 target_include_directories(anton PRIVATE src)
@@ -98,7 +100,7 @@ endif()
 # Self-checks: assert-based mains over the pure headers. -UNDEBUG because a
 # Release build defines NDEBUG, which would compile every assert away.
 enable_testing()
-foreach(t IN ITEMS model fold llm markdown temoc)
+foreach(t IN ITEMS model filters fold llm markdown temoc)
   add_executable(${t}_check tests/${t}_check.cpp)
   target_include_directories(${t}_check PRIVATE src plugins/slkx plugins/llm plugins/temoc)
   target_link_libraries(${t}_check PRIVATE nlohmann_json::nlohmann_json)

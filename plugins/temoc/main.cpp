@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
       emit(json({{"health", "error"}, {"text", problem}}).dump(-1, ' ', false, json::error_handler_t::replace));
     } else {
       emit(R"({"health":"ok"})");
-      emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}}}}})
+      emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}, {"button", "Run specs"}}}}})
                .dump(-1, ' ', false, json::error_handler_t::replace));
     }
   }

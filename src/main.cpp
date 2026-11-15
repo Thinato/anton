@@ -39,9 +39,9 @@ int main(int argc, char** argv) {
     } else if (a == "--no-plugins") {
       cfg.plugins.clear();
     } else if (a == "--query" && i + 1 < argc) {
-      cfg.views = {{"Query", argv[++i], "", ""}};
+      cfg.adhoc_query = argv[++i];
     } else if (a.rfind("--query=", 0) == 0) {
-      cfg.views = {{"Query", a.substr(8), "", ""}};
+      cfg.adhoc_query = a.substr(8);
     } else {
       std::fprintf(stderr, "anton: unknown argument %s\n%s", a.c_str(), kUsage);
       return 2;

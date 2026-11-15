@@ -33,6 +33,7 @@ class Plugins {
   void start();
   void refresh();  // reruns the "refresh" plugins
   void stop();     // kills every plugin's process group
+  void restart(size_t i);  // stops plugin i if it's up and runs it again now
   // One line to a long-running plugin's stdin. False if it isn't running or
   // its pipe is full (it doesn't read stdin): never blocks the UI.
   bool send(size_t i, const std::string& line);
@@ -43,7 +44,7 @@ class Plugins {
 
  private:
   void loop(size_t i);
-  bool wait_for(std::unique_lock<std::mutex>& lk, int seconds);
+  bool wait_for(std::unique_lock<std::mutex>& lk, int seconds, size_t i);
 
   std::vector<PluginConfig> cfg_;
   OnLine on_line_;
@@ -53,6 +54,8 @@ class Plugins {
   // Fixed slots so a signal handler can read them lock-free.
   static inline std::atomic<pid_t> pids_[kMaxPlugins] = {};
   int in_[kMaxPlugins];  // stdin write ends, -1 when not running; under mu_
+  bool restart_[kMaxPlugins] = {};  // run again without waiting; under mu_
+  bool looping_[kMaxPlugins] = {};  // its loop thread is alive; under mu_
   unsigned long refresh_gen_ = 0;
   bool stopped_ = false;
 };

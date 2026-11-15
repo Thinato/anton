@@ -14,7 +14,7 @@ anton has **no Slack knowledge**. Slack is one plugin among possible others
 - Reviewing code inside the TUI (diffs, comments). Enter reads the PR's
   description and its markdown files; `w` opens the browser for the rest.
 - Writing to GitHub (approve, merge, comment).
-- Persistence between runs. Everything is rebuilt at startup.
+- Persistence between runs beyond config.json (which Save and Settings write). Everything else is rebuilt at startup.
 - Any GitHub auth of its own. `gh auth status` must already succeed.
 
 ## Data source: one `gh api graphql` call
@@ -35,6 +35,7 @@ query($q: String!, $after: String) {
       reviewDecision                       # APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null
       repository { nameWithOwner owner { login } }
       author { login }
+      labels(first: 20) { nodes { name } }
       latestReviews(first: 20) { nodes { author { login } state } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     } }
@@ -115,6 +116,9 @@ A list view's `query` is applied **locally** to the fetched PRs, and supports
 the qualifiers that can be answered from the fetched fields:
 `is:open|closed|merged`, `is:draft`, `-is:draft`, `org:`, `user:`, `repo:`,
 `author:` (with `@me`), `review:approved|changes_requested|required`,
+`label:` (any of the PR's first 20 labels, case-insensitive; quote one with
+a space: `label:"needs review"`), `reviewed-by:@me` (you have a review on it,
+from `latestReviews`; other logins are an error: anton only knows your own),
 `recent:<N>h|<N>d` (open, or closed/merged within that window: keeps a merge
 on screen for a while, e.g. `recent:24h`), and `-` negation of each. Anything else is an error shown in the footer, not a
 silent no-op. Full GitHub syntax remains available in search views.
@@ -123,19 +127,111 @@ The org/repo filter applies to the active view and is kept when switching
 views (it is a session-wide scope, not per view). It works the same on both
 kinds, since `org:` and `repo:` are in the local subset.
 
-## Columns
+## The screen
 
 ```
- Code review (14) │ Created (5) │ Review requests (3)            org:brick-so
-─────────────────────────────────────────────────────────────────────────────────
- REPO          #      SIZE          STATE        AGE  AUTHOR    TAGS      TITLE
- core       20387   +425 -8         review       2d   clemente  👀 alice  feat(server): conv…
- core       20384    +1k -3k        ✗ checks     5h   victor              server: workflow…
- server      1270   +12 -40         ⚙ queued     1w   guininov            Feat/pipeline att…
- web          881    +88 -0         draft        3w   paulo               wip: new nav
-─────────────────────────────────────────────────────────────────────────────────
- r refresh  / query  o org  p repo  x clear  ⏎ read  w web  y copy  q quit   ↻ 40s ago
+ anton   Created 5   Review requests 2   Code review• 4   Assigned 1   +             , settings   ? commands
+  list slack · code-review ▾   state open + merged 24h ✕   review approved ✕   + filter       sort list order ▾
+ / recent:24h review:approved                  ● Code review changed   S Save   Save as new view   Revert
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  REPO   SIZE        STATE       ↓AGE  AUTHOR   TAGS          TITLE
+▌ core    +331 -61   💬 Ready?     30m  lucas                  feat(billing): invoices list each seat…   ┃
+  core    +260 -20   approved ✓    30m  lucas                  feat(billing): a downgrade waits for t…   │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+ core#4825  feat(billing): invoices list each seat change on its own line
+ lucas · opened 30m ago · +331 −61 in 6 files · checks passing · approved       github.com/acme/core/pull/4825
+ slack 💬 Ready?
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏎ Read   w Browser   y Copy URL   v Toggle 👀   T Run specs                 slack ●  temoc ●   ↻ 40s ago
+ tip click a header to sort · wheel scrolls · double-click reads · right-click a tab for options
 ```
+
+Top to bottom (colors are truecolor when `COLORTERM=truecolor`, else the
+nearest ANSI color; the selected row is then inverted rather than tinted):
+
+- **Tab bar**: ` anton `, then a tab per view with its row count (search
+  views are all fetched once at startup so every tab has one), a yellow `•`
+  after a view whose filters changed (below), ` + ` (a new search view),
+  and `, settings   ? commands` on the right.
+- **Filter bar**: the active view's query read as chips. A list view starts
+  with `list <plugin> · <list>` (pick another list the plugin offers). Then
+  `state` (`is:open|closed|merged`, `recent:Nh`), `review` (`review:`,
+  `reviewed-by:`, `review-requested:`), `author`, `repo` (`repo:`, `org:`,
+  `user:`), set ones first; then a chip per `label:` and per other
+  qualifier or word. A chip at its default reads `review any ▾`; a set one
+  shows its value in cyan with `✕`, which takes its qualifiers out. Clicking
+  a chip opens its options; `+ filter` (`f`) adds label, author, reviewer,
+  draft, checks, base branch, updated, involves or text in title, then a
+  value: one seen in results this session (labels with how many PRs have
+  them) or whatever you type. In list views, options the local filter can't
+  answer are greyed out with `search views only` (and `recent:` is greyed
+  in search views). `sort <name> ▾` is on the right.
+- **Query row**: `/ <query>`, keys dim and values bright; click it or press
+  `/` to edit. While editing, `Tab` completes the word under the cursor
+  (qualifier names, then values from results: `label:bu` → `label:bug`,
+  with a popup to pick from), `↑`/`↓` go through queries applied this
+  session (or the popup), `⏎` applies, `esc` cancels. The chips follow the
+  typing. Chips and query are one filter: each chip edit is an edit of the
+  query, and the other way round. With an org/repo scope set (`o`, `p`),
+  the scope qualifiers in an edited query become the new scope.
+- **Changed views**: a view whose query, sort, list or the session's
+  org/repo scope makes it differ from config.json gets the `•` and, on the
+  query row, `● <view> changed  S Save  Save as new view  Revert`. Save
+  (`S`) writes that view (name, query with the scope in it, plugin, list,
+  sort) into config.json; Save as new view asks for a name, adds the tab
+  after this one and reverts this one; Revert restores the saved query and
+  sort and drops the org/repo scope. A view made with `+` isn't saved until
+  you save it (then it asks for its name) or `Discard` it.
+- **Tab menu** (right-click a tab, or `m` for the active one): Save filters
+  `S`, Save as new view…, Revert to saved, Rename…, Duplicate, Move left
+  `<`, Move right `>`, Delete view… (asks first; the last view can't go).
+  Rename, duplicate, move and delete write config.json right away.
+- **The list** (columns below), with a scrollbar when it doesn't fit. A
+  column header that is a sort key (REPO, SIZE, AGE = created) sorts by it
+  on click and shows `↓` while it's the sort (`SIZE ↓`, `↓AGE`).
+- **Detail**, three lines for the selected PR: `repo#number` and the full
+  title; author · opened when · `+a −d in N files` · checks · review state ·
+  labels, with the URL on the right (click opens it); then what plugins say
+  (status, tags with their hints), command-column errors, `n read note`.
+- **Buttons**: `⏎ Read  w Browser  y Copy URL  n Note`, then a button per
+  plugin action (02-plugins.md); plugin health dots and `↻ 40s ago` right.
+  With no PR: `? Commands  r Refresh  , Settings`.
+- **Message line**: notices and errors, else a dim tip; the update notice
+  on the right.
+
+Nothing matches: `No open PRs match this view.` (or `No PRs …`), the query,
+and buttons for what would show something: drop the last qualifier added,
+include closed (drops `is:open`), edit the query, and, on a changed view,
+revert.
+
+Narrow terminals (under 100 columns): the chips fold into one `filters N ▾`
+chip (a menu of them) with a summary; before that, chips at their default
+drop out when the bar is too full. The query row only shows while editing
+or when the view changed; tabs other than the active one shorten
+(`Review`, `Code rev`) and scroll with `‹ ›`; the buttons become keys only;
+`#`, then TAGS, then AGE step aside so TITLE keeps 20 columns.
+
+### Mouse
+
+Everything clickable is: tabs (right-click: the tab menu), chips and their
+`✕`, menu rows, column headers, rows (click selects, double-click reads),
+every button, the reader's tabs, outline and buttons, every settings
+control. The wheel scrolls the list (the selection follows), the reader,
+menus, the note and settings. A click outside an open menu closes it and
+goes through to what's under it. Settings lists reorder by dragging their
+`⠿` rows. `"mouse": false` (also in Settings) stops mouse tracking, so the
+terminal selects text as usual.
+
+### Commands (`?`)
+
+A filterable list of every action with its key, grouped THIS PR, LIST,
+VIEWS, ANTON, plugin actions included (`<label> · <plugin>`); type to
+filter, `↑`/`↓`, `⏎` or a click runs one. Every key works without it.
+Plugin health and stderr moved to Settings › General › Plugins.
+
+## Columns
+
+The table part of the screen above.
 
 - **REPO**: repo name; owner shown only if results span more than one owner.
 - **SIZE**: `+additions -deletions`, compact (below). Colored, in every view,
@@ -170,6 +266,9 @@ kinds, since `org:` and `repo:` are in the local subset.
 `repo`, `number` (the `#` column), `size`, `state`, `age`, `author`, `tags`,
 `title`. The default is all of them in that order. An unknown name is a config
 error. Without `title`, nothing flexes and the row ends after the last column.
+A column turned off in Settings stays in the list as
+`{"name": "repo", "hidden": true}` (a command column gets `"hidden": true`
+in its object), so it can be turned back on; at least one must be shown.
 
 ### Command columns
 
@@ -201,6 +300,9 @@ An object in `"columns"` is a column you fill with your own program:
 
 Sort is per view. Search views: `updatedAt` descending; `s` cycles updated → created → size → repo.
 List views start on `list` (the plugin's `order`, higher first; PRs without one go last, by update) and `s` cycles list → updated → created → size → repo.
+A view's `"sort"` in the config (`updated`, `created`, `size`, `repo`, or
+`list` in list views) is where it starts; the sort chip, a header click and
+`s` change it, which marks the view changed.
 
 ## Compact line counts
 
@@ -220,18 +322,28 @@ Width is therefore at most 4 chars per side (`+999`, `-10k`).
 
 | key | |
 | --- | --- |
-| `j`/`k`, `↑`/`↓`, `g`/`G` | move |
+| `j`/`k`, `↑`/`↓`, `g`/`G`, PgUp/PgDn | move |
 | `⏎` | read the PR's description and markdown files (Reader, below) |
 | `w` | open PR in browser (`gh pr view --web <url>`) |
 | `y` | copy URL (`pbcopy` / `xclip` / `wl-copy`, first found) |
 | `r` | refresh now |
-| `/` `o` `p` `x` | filters (above) |
+| `/` `o` `p` `x` | filters (above); `/` edits the query row |
+| `f` | add a filter (`+ filter`) |
 | `s` | cycle sort |
-| `1`..`9`, `Tab` | switch view |
+| `1`..`9`, `Tab`/`Shift-Tab` | switch view |
+| `S` | save the view's filters to config.json |
+| `m` | the active tab's menu (save, revert, rename, duplicate, move, delete) |
+| `<` `>` | move the active tab left / right |
+| `+` | new search view |
 | `n` | read a plugin's note on the PR, e.g. an LLM review (`02-plugins.md`) |
-| `?` | help overlay (also lists plugin keys) |
+| `?` | commands: every action and its key (above) |
+| `,` | settings |
+| `e` | config.json in `$EDITOR` |
 | `q` | quit |
-| *plugin keys* | declared by a running plugin, e.g. `v` (anton-slkx: toggle 👀 in Slack) on the selected PR. anton's own keys win a clash. See `02-plugins.md`. |
+| *plugin keys* | declared by a running plugin, e.g. `v` (anton-slkx: toggle 👀 in Slack) on the selected PR, also shown as buttons. anton's own keys win a clash. See `02-plugins.md`. |
+
+Menus: `↑`/`↓` (`j`/`k` when there's nothing to type), `⏎` runs, `→`
+opens a submenu, `←`/`esc` goes back, and a row's key (`S`, `<`) runs it.
 
 Refresh: on start, on `r`, on view/filter change, and every
 `refresh_seconds` (default 120). A refresh never blocks input; the footer shows
@@ -248,11 +360,26 @@ could feed a plugin that tells anton to re-fetch a PR the moment it changes.
 
 ## Reader
 
-`⏎` replaces the table with the selected PR's description: its title, then
-`repo#number  author  url`, a row of tabs, then the body rendered as
-markdown, glow-style. `j`/`k`, `space`/PgDn, PgUp, `g`/`G` scroll and the
-footer shows how far down you are; `w` or `⏎` opens the PR in the browser,
-`y` copies its URL, `q`/`esc` goes back to the table.
+`⏎` (or a double-click) replaces the table with the selected PR's
+description: ` ← back ` (click), `repo#number` and the title; then author ·
+opened · `+a −d` · state · plugin tags, with where the text is from on the
+right (the URL, or a file's `path @ sha`); a row of tabs, the open one
+underlined; then the body rendered as markdown, glow-style, with a
+scrollbar. `j`/`k`, `space`/PgDn, PgUp, `g`/`G` and the wheel scroll, and the
+footer says `lines a–b of N`; `w` or `⏎` opens the PR in the browser, `y`
+copies its URL, `q`/`esc` goes back to the table. Plugin keys work here
+too, on this PR (`T` runs its temoc specs). The footer's buttons: `esc
+Back`, `Tab Next file`, one per plugin action, `w Browser`, `y Copy URL`.
+
+On terminals 120 columns or wider an outline sits on the right, `ON THIS
+PAGE`: the headings (levels 1-3) and, in a file, each temoc table
+(`decisionTable` directive) with the worst result on it (`✗ StepsFixture`,
+`💤 UpgradeFixture`), in source order; the section you're reading is
+highlighted, and a click jumps there (to the first display line of that
+source line or after). Under it, a block per plugin with marks on the file:
+its name, the counts (`✓ 5  ✗ 2  💤 1`), the commit it ran on and whether
+that's still the head, and a button per action that plugin offers (`T Run
+specs`).
 
 The team reads more markdown than code, so the reader also shows the
 markdown files the PR adds or changes, each in a tab after `Description`:
@@ -335,6 +462,8 @@ Optional; every key has a default.
   "refresh_seconds": 120,
   "watch_seconds": 15,
   "auto_update": true,
+  "mouse": true,
+  "start_view": "Code review",
   "size": { "green_below": 450, "red_from": 1000 },
   "title_strip": "^\\[(PRO|ARG)-\\d+\\]\\s*",
   "people": {
@@ -342,7 +471,7 @@ Optional; every key has a default.
   },
   "views": [
     { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "is:open" },
-    { "name": "Created",     "query": "is:open author:@me" }
+    { "name": "Created",     "query": "is:open author:@me", "sort": "size" }
   ],
   "plugins": [
     { "name": "slack",
@@ -368,11 +497,60 @@ color; with only `ansi`, every terminal uses it. A bad value is a config error.
 Display only: `author:` filters still take the login.
 
 `views`, when present, replaces the defaults entirely, so the order you write
-is the tab order and the first is the landing view. The example above is the
-personal setup: `#code-review` first, queued PRs marked.
+is the tab order. The landing view is `start_view` (a view's name), else the
+first. A view's `sort` is where its sort starts (Columns, above). The example
+above is the personal setup: `#code-review` first, queued PRs marked.
+
+`mouse` (default true): clicks and the wheel (The screen, above). False
+leaves the mouse to the terminal.
 
 `--query '<search>'` on the command line opens an ad-hoc view instead of the
-configured ones. `--no-plugins` starts without plugins.
+configured ones; it's unsaved (`•`), and saving it adds it to `views`
+without touching the others. `--no-plugins` starts without plugins.
+
+### Settings (`,`)
+
+A full screen: General, Views, Columns on the left (`Tab` switches),
+`j`/`k` move between controls, `⏎`/space changes one (or asks for a typed
+value), `h`/`l` or `-`/`+` step numbers and flip toggles, `J`/`K` (or
+dragging `⠿`) reorder, `e` opens config.json in `$EDITOR`, `esc` closes.
+Every change is checked and written to config.json at once; a problem
+shows on the second line, red.
+
+- **General**: refresh and watch seconds (`−`/`+` by 10 and 5, or typed;
+  clamped to the same minimums as the file, 10 and 5), auto update, the
+  start view, mouse. Then each plugin's state, health text, keys, PR count,
+  command (dim) and last stderr line, with a Restart button (it stops the
+  plugin and runs it again now). A plugin's command lives in the file only.
+- **Views**: the tabs in order (reorder, `+ New view`), and for the one
+  picked: name, kind (a GitHub search, or the PRs a plugin lists: plugin and
+  list pickers, from the lists the plugin has sent), filter (a list view's
+  must pass the local filter), sort, Duplicate, Delete view (asks first).
+  Changes apply to the view as saved and as it is on screen.
+- **Columns**: every built-in and command column, toggled and reordered (a
+  command column's command stays in the file), the size colors with samples
+  in each color, `title_strip` with a live before → after, and a preview of
+  the table on the active view's first rows.
+
+`e` (here, in the list, or from `?`) suspends anton's screen, runs
+`$EDITOR` (split on spaces, so `code -w` works; `vi` without one) on
+config.json and reads it back. A file that doesn't load leaves everything
+as it was and says why; changed plugins take effect when anton restarts.
+
+### Writing config.json
+
+anton reads the file, sets only the keys it manages (`views`, `columns`,
+`size`, `title_strip`, `refresh_seconds`, `watch_seconds`, `auto_update`,
+`mouse`, `start_view`) and writes it back with every other key and value
+(`plugins`, `people`, a command column's `command`, keys it doesn't know)
+as they were, keys in their order, 2-space indent. A managed key the file
+doesn't have is only added once it's off its default. A view or column
+entry keeps the keys anton doesn't know, matched by name. The new text goes
+to a temp file next to it, with the old one's permissions, renamed over
+it. A file that doesn't parse, isn't an object, or has comments (rewriting
+would drop them) is left alone: the change stays for the session and the
+footer says `config.json not saved: …`. (`src/config_write.hpp`;
+`tests/filters_check.cpp`.)
 
 Validated at startup (anton exits with the problem before drawing): a list
 view's `plugin` must name a configured plugin; at most 32 plugins.
@@ -419,12 +597,19 @@ Same toolchain as slkx, so the two feel like siblings:
 ```
 src/main.cpp          args, `gh auth status` preflight, runs the screen
 src/config.hpp        config.json -> Config, defaults
+src/config_write.hpp  Config -> config.json, merged into what's there; atomic save
+src/filters.hpp       chips, menu options and completions read off a query — pure
 src/proc.hpp/cpp      posix_spawnp + pipes, line reader (shared with the plugin)
 src/github.hpp/cpp    search + alias fetch, gh graphql call, JSON → Pr
 src/model.hpp         Pr, Tag, state derivation, compact(n), age(t),
                       qualifier editing, local query filter — pure
 src/plugins.hpp/cpp   spawn plugins, read JSONL, restart, fold into the store
-src/ui.hpp/cpp        FTXUI components: tabs, table, pickers, reader, footer
+src/ui.hpp            run_ui()
+src/ui_impl.hpp       the UI's state and shared pieces (colors, menus, hits)
+src/ui.cpp            fetching, plugins, views, the list, filter bar, menus,
+                      the palette, mouse dispatch
+src/ui_reader.cpp     the reader (outline included) and the note overlay
+src/ui_settings.cpp   settings, $EDITOR
 src/markdown.hpp/cpp  markdown -> styled display lines (md4c), temoc
                       directives, marks laid onto the lines — pure
 plugins/slkx/main.cpp the anton-slkx executable (03-plugin-slkx.md)
@@ -435,6 +620,7 @@ plugins/temoc/main.cpp the anton-temoc executable (05-plugin-temoc.md)
 plugins/temoc/temoc.hpp its pure config parse, temoc event fold, pr line
 plugins/run.hpp       {tmp}, PR worktree, watched run: shared by llm and temoc
 tests/model_check.cpp assert-based self-check for model.hpp
+tests/filters_check.cpp   assert-based self-check for filters.hpp, config_write.hpp
 tests/fold_check.cpp  assert-based self-check for fold.hpp
 tests/llm_check.cpp   assert-based self-check for llm.hpp
 tests/markdown_check.cpp  assert-based self-check for markdown.cpp
@@ -447,7 +633,7 @@ building it needs nothing slkx-related, and anton never requires it.
 `anton-llm` likewise (`-DANTON_LLM_PLUGIN=OFF`); it only execs the commands
 you configure. `anton-temoc` too (`-DANTON_TEMOC_PLUGIN=OFF`); it execs `temoc`.
 
-`model.hpp`, `fold.hpp`, `llm.hpp` and `temoc.hpp` are pure, with assert-based checks run by `ctest`,
+`model.hpp`, `filters.hpp`, `config_write.hpp` (but its `save_config`), `fold.hpp`, `llm.hpp` and `temoc.hpp` are pure, with assert-based checks run by `ctest`,
 in the same style as slkx's self-checks.
 
 ## Open questions

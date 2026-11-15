@@ -11,9 +11,10 @@ using nlohmann::json;
 
 static const char* kFields = R"(
 fragment F on PullRequest {
-  number title url isDraft state createdAt updatedAt closedAt additions deletions reviewDecision mergeable
+  number title url isDraft state createdAt updatedAt closedAt additions deletions changedFiles reviewDecision mergeable
   repository { nameWithOwner owner { login } }
   author { login }
+  labels(first: 20) { nodes { name } }
   latestReviews(first: 20) { nodes { author { login } state submittedAt } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 })";
@@ -66,6 +67,7 @@ static Pr to_pr(const json& n, const std::string& viewer) {
   pr.draft = n.contains("isDraft") && n["isDraft"].is_boolean() && n["isDraft"].get<bool>();
   pr.additions = num("additions");
   pr.deletions = num("deletions");
+  pr.changed_files = num("changedFiles");
   pr.review_decision = sget(n, "reviewDecision");
   pr.created = parse_time(sget(n, "createdAt"));
   pr.updated = parse_time(sget(n, "updatedAt"));
@@ -81,6 +83,9 @@ static Pr to_pr(const json& n, const std::string& viewer) {
         pr.my_review = sget(r, "state");
         pr.my_review_at = sget(r, "submittedAt");
       }
+  if (json labels = at(n, "/labels/nodes"); labels.is_array())
+    for (auto& l : labels)
+      if (std::string name = sget(l, "name"); !name.empty()) pr.labels.push_back(name);
   if (commits.is_array())
     for (auto& c : commits) pr.checks = sget(at(c, "/commit/statusCheckRollup"), "state");
   return pr;
