@@ -233,7 +233,9 @@ void Gui::markdown(const std::string& md_text, const std::string& path, bool spe
     switch (b.kind) {
       case md::Block::Heading: {
         static const float big[] = {26, 20, 16, 14, 13, 13}, small[] = {17, 15, 14, 13, 13, 13};
-        float sz = (compact ? small : big)[std::clamp(b.heading, 1, 6) - 1];
+        // not (compact ? small : big)[i]: GCC 11 read past that, crashing on Linux
+        int level = b.heading < 1 ? 1 : b.heading > 6 ? 6 : b.heading;
+        float sz = compact ? small[level - 1] : big[level - 1];
         if (i > 0) gap(compact ? 6 : 16);
         ImGui::SetCursorPosX(cx);
         ImVec2 p = line();
