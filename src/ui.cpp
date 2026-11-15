@@ -1760,9 +1760,9 @@ Element Ui::render_table(const std::vector<Pr>& rs, int height, bool live) {
   Elements head = {text("  ")};
   for (auto* c : cols) {
     std::string n = c->command.empty() ? c->name : "";
-    std::optional<Sort> by = n == "repo" ? std::optional(Sort::Repo) : n == "size" ? std::optional(Sort::Size)
-                             : n == "age" ? std::optional(Sort::Created) : std::nullopt;
-    bool sorted = by && *by == sort;
+    // the header sorts by it: REPO, SIZE, AGE (created); List stands for none
+    Sort by = n == "repo" ? Sort::Repo : n == "size" ? Sort::Size : n == "age" ? Sort::Created : Sort::List;
+    bool sorted = by != Sort::List && by == sort;
     std::string arrow = sorted ? " ↓" : "";
     Element h = !c->command.empty() ? cell(c->name, c->width)
                 : n == "repo"       ? cell("REPO" + arrow, repo_w)
@@ -1774,7 +1774,7 @@ Element Ui::render_table(const std::vector<Pr>& rs, int height, bool live) {
                 : n == "tags"       ? cell("TAGS", tags_w)
                                     : text("TITLE") | flex;
     h = sorted ? h | color(pal(Pal::Fg)) | bold : h | color(pal(Pal::Dim));
-    if (live && by) h = clickable(h, [this, s = *by] { set_sort(s); });
+    if (live && by != Sort::List) h = clickable(h, [this, by] { set_sort(by); });
     head.push_back(h);
     flex_col = flex_col || n == "title";
     head.push_back(text(std::string(static_cast<size_t>(gap(*c) - (n == "age" && sorted ? 2 : 0)), ' ')));
