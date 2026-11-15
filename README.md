@@ -47,20 +47,36 @@ anton opens on GitHub's own pull-request tabs: Created, Review requests,
 Assigned, Mentioned. Every tab is a GitHub search, so anything the search box
 takes works here.
 
+Under the tabs, the tab's filter is always on screen twice: as chips
+(`state open ✕`, `review any ▾`, `label bug ✕`) and as the query they make
+(`/ is:open author:@me label:bug`). Click a chip for its options, its `✕` to
+drop it, `+ filter` to add a label, author, reviewer and more, or edit the
+query with completion (`Tab`). Change a tab's filter and it gets a yellow `•`
+with `Save`, `Save as new view` and `Revert`; Save writes it to your config.
+
+Everything takes the mouse: tabs (right-click for rename, duplicate, move,
+delete), chips, column headers (click to sort), rows (double-click reads),
+buttons, the wheel. Every button shows its key, and `?` lists every command.
+
 | key | |
 | --- | --- |
 | `j` `k` `g` `G` | move |
 | `⏎` | read the description (`j` `k` `space` `g` `G` scroll, `Tab` `[` `]` the PR's `.md` files, `q` back) |
 | `w` / `y` | open in browser / copy URL |
-| `/` | edit the query: `is:open review-requested:@me label:bug` |
+| `/` `f` | edit the query: `is:open review-requested:@me label:bug` / add a filter |
 | `o` `p` `x` | scope to an org / a repo / clear it |
 | `s` | sort: updated, created, size, repo |
 | `1`–`9` `Tab` | switch tab |
+| `S` `m` `+` | save the tab's filter / the tab's menu / a new tab |
 | `r` | refresh (also automatic, every 2 min) |
 | `n` | read a plugin's note on the PR, like an LLM review |
-| `?` | help, including keys plugins add |
+| `,` / `e` | settings / config.json in `$EDITOR` |
+| `?` | every command, including keys plugins add |
 
 `anton --query 'repo:me/thing is:open'` opens a single ad-hoc tab.
+
+On a wide terminal the reader has an outline on the right: headings, each
+temoc spec table with its result, and a button to run the specs again.
 
 SIZE is `+additions -deletions` in short form (`+12k -40`): green when small,
 red when it'll eat your afternoon. STATE shows the one thing that matters most,
@@ -69,7 +85,10 @@ changes requested, approved, your own review, waiting for review.
 
 ## Configure
 
-`~/.config/anton/config.json`. Every key is optional.
+`~/.config/anton/config.json`. Every key is optional. Settings (`,`) change
+tabs, columns, size colors, the title strip, refresh, updates and the mouse,
+and write them to this file as you go, leaving the rest of it (plugins,
+people, your own keys) as it was; `e` opens it in `$EDITOR` for the rest.
 
 ```json
 {
@@ -91,7 +110,9 @@ changes requested, approved, your own review, waiting for review.
 }
 ```
 
-- `views` replaces the default tabs. The first is where anton opens.
+- `views` replaces the default tabs. The first is where anton opens
+  (`"start_view": "Mine"` picks another). A view's `"sort"` is where its sort
+  starts.
 - `title_strip` cuts a regex out of every title, e.g. the ticket ID your team
   prefixes PRs with.
 - `people` renames GitHub logins and colors them. Use the same name your Slack
@@ -114,6 +135,9 @@ changes requested, approved, your own review, waiting for review.
   [specs/01-anton.md](specs/01-anton.md#command-columns).
 - `recent:24h` is anton's own filter: open PRs, plus those closed or merged in
   the last 24 hours. It's handy on a Slack tab, where merges are worth seeing.
+  A Slack tab filters locally, so it takes `is:`, `org:`, `repo:`, `author:`,
+  `review:`, `label:`, `reviewed-by:@me` and `recent:`.
+- `"mouse": false` leaves the mouse to your terminal.
 
 ## Plugins
 

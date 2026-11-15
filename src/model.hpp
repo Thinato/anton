@@ -34,6 +34,8 @@ struct Pr {
   bool draft = false;
   long additions = 0, deletions = 0;
   std::string mergeable;           // MERGEABLE | CONFLICTING | UNKNOWN (GitHub computes it lazily)
+  std::vector<std::string> labels;  // names, the first 20
+  long changed_files = 0;
   std::time_t created = 0, updated = 0, closed = 0;  // closed: also set when merged
   bool partial = false;  // only url/repo/number/state/closed known (see fetch_states)
 };
@@ -252,7 +254,8 @@ inline long duration_secs(const std::string& v) {
 // Parses the subset a list view can answer from fetched fields. Returns
 // nullopt and sets err for anything else, so it is never a silent no-op.
 inline std::optional<std::vector<Pred>> parse_local(const std::string& q, std::string& err) {
-  static const std::set<std::string> keys = {"is", "org", "user", "repo", "author", "review", "recent"};
+  static const std::set<std::string> keys = {"is",     "org",    "user",   "repo",
+                                             "author", "review", "recent", "label", "reviewed-by"};
   std::vector<Pred> out;
   for (auto t : tokenize(q)) {
     Pred p;
@@ -285,6 +288,12 @@ inline std::optional<std::vector<Pred>> parse_local(const std::string& q, std::s
       err = "review: takes approved, changes_requested, required or none";
       return std::nullopt;
     }
+    if (p.key == "reviewed-by" && p.value != "@me") {
+      err = "list views take reviewed-by:@me only (they know your own review, not others')";
+      return std::nullopt;
+    }
+    if (p.value.size() > 1 && p.value.front() == '"' && p.value.back() == '"')
+      p.value = p.value.substr(1, p.value.size() - 2);  // label:"needs review"
     out.push_back(p);
   }
   return out;
@@ -314,6 +323,10 @@ inline bool local_match(const Pr& pr, const std::vector<Pred>& preds, const std:
       else if (v == "required") hit = pr.review_decision == "REVIEW_REQUIRED";
       else if (v == "none") hit = pr.review_decision.empty();
       else hit = false;
+    } else if (p.key == "label") {
+      hit = std::any_of(pr.labels.begin(), pr.labels.end(), [&](const std::string& l) { return lower(l) == v; });
+    } else if (p.key == "reviewed-by") {  // @me: parse_local takes nothing else
+      hit = !pr.my_review.empty();
     }
     if (hit == p.neg) return false;
   }
@@ -342,8 +355,9 @@ struct PrInfo {
 };
 
 // A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
+// button: a short label for its button ("Run specs"); the label otherwise.
 struct Action {
-  std::string id, key, label;
+  std::string id, key, label, button;
 };
 
 struct PluginState {
@@ -382,7 +396,7 @@ inline nlohmann::json pr_json(const Pr& p) {
           {"title", p.title}, {"author", p.author}, {"state", p.state}, {"draft", p.draft},
           {"review_decision", p.review_decision}, {"checks", p.checks}, {"my_review", p.my_review},
           {"mergeable", p.mergeable}, {"additions", p.additions}, {"deletions", p.deletions},
-          {"created", p.created}, {"updated", p.updated}, {"closed", p.closed}};
+          {"created", p.created}, {"updated", p.updated}, {"closed", p.closed}, {"labels", p.labels}};
 }
 
 // "{repo}#{number}" -> "o/r#12": a {name} that's a field of j becomes its
@@ -422,7 +436,7 @@ inline std::string apply_line(PluginState& st, const std::string& line) {
     st.actions.clear();
     for (auto& a : *it)  // one-character keys only: anton's own keys win
       if (a.is_object() && !str(a, "id").empty() && str(a, "key").size() == 1)
-        st.actions.push_back({str(a, "id"), str(a, "key"), str(a, "label")});
+        st.actions.push_back({str(a, "id"), str(a, "key"), str(a, "label"), str(a, "button")});
   }
   if (!j.contains("pr")) return "";
   std::string url = normalize_url(str(j, "pr"));
@@ -501,6 +515,7 @@ inline std::vector<std::string> short_names(const std::vector<std::string>& path
 // List: the plugin's `order` (list views only; their default).
 enum class Sort { List, Updated, Created, Size, Repo };
 
+// The name in config.json ("sort") and on the sort chip.
 inline const char* sort_name(Sort s) {
   switch (s) {
     case Sort::List: return "list";
@@ -510,6 +525,12 @@ inline const char* sort_name(Sort s) {
     case Sort::Repo: return "repo";
   }
   return "";
+}
+
+inline std::optional<Sort> parse_sort(const std::string& name) {
+  for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo})
+    if (name == sort_name(s)) return s;
+  return std::nullopt;
 }
 
 inline void sort_prs(std::vector<Pr>& v, Sort s) {

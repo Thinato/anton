@@ -33,7 +33,23 @@ void Plugins::kill_all_from_signal() {
 
 void Plugins::start() {
   // ponytail: detached threads; anton _Exits after stop(), so nothing joins.
-  for (size_t i = 0; i < cfg_.size(); ++i) std::thread([this, i] { loop(i); }).detach();
+  std::lock_guard lk(mu_);
+  for (size_t i = 0; i < cfg_.size(); ++i) {
+    looping_[i] = true;
+    std::thread([this, i] { loop(i); }).detach();
+  }
+}
+
+void Plugins::restart(size_t i) {
+  std::lock_guard lk(mu_);
+  if (stopped_ || i >= cfg_.size()) return;
+  restart_[i] = true;
+  kill_group(pids_[i].load());  // its loop runs it again once it's down
+  cv_.notify_all();
+  if (!looping_[i]) {  // a "never" plugin that has had its one run
+    looping_[i] = true;
+    std::thread([this, i] { loop(i); }).detach();
+  }
 }
 
 void Plugins::refresh() {
@@ -50,8 +66,10 @@ void Plugins::stop() {
 }
 
 // True when stopped during the wait.
-bool Plugins::wait_for(std::unique_lock<std::mutex>& lk, int seconds) {
-  return cv_.wait_for(lk, std::chrono::seconds(seconds), [this] { return stopped_; });
+// A restart of plugin i ends the wait early.
+bool Plugins::wait_for(std::unique_lock<std::mutex>& lk, int seconds, size_t i) {
+  cv_.wait_for(lk, std::chrono::seconds(seconds), [&] { return stopped_ || restart_[i]; });
+  return stopped_;
 }
 
 void Plugins::loop(size_t i) {
@@ -63,10 +81,11 @@ void Plugins::loop(size_t i) {
       std::unique_lock lk(mu_);
       if (stopped_) return;
       if (c.rerun == "refresh") {  // anton's first refresh is the first run
-        cv_.wait(lk, [&] { return stopped_ || refresh_gen_ != seen_gen; });
+        cv_.wait(lk, [&] { return stopped_ || refresh_gen_ != seen_gen || restart_[i]; });
         if (stopped_) return;
       }
       seen_gen = refresh_gen_;
+      restart_[i] = false;
     }
 
     auto t0 = std::chrono::steady_clock::now();
@@ -98,14 +117,18 @@ void Plugins::loop(size_t i) {
     }
     on_exit_(i, code);
 
-    if (c.rerun == "never") return;
-    if (c.rerun == "exit") {
+    std::unique_lock lk(mu_);
+    if (c.rerun == "never" && !restart_[i]) {
+      looping_[i] = false;
+      return;
+    }
+    if (c.rerun == "exit" && !restart_[i]) {
       // 5s after a long run; doubling to 5 min while it keeps dying quickly.
       if (std::chrono::steady_clock::now() - t0 >= std::chrono::seconds(30)) delay = 5;
-      std::unique_lock lk(mu_);
-      if (wait_for(lk, delay)) return;
+      if (wait_for(lk, delay, i)) return;
       delay = std::min(delay * 2, 300);
     }
+    if (restart_[i]) delay = 5;
   }
 }
 

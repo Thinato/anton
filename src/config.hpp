@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -21,7 +22,10 @@ namespace anton {
 struct View {
   std::string name, query;
   std::string plugin, list;  // set together: a list view
+  std::optional<Sort> sort;  // config "sort"; unset: list for list views, else updated
   bool is_list() const { return !list.empty(); }
+  Sort sort_or_default() const { return sort.value_or(is_list() ? Sort::List : Sort::Updated); }
+  bool operator==(const View&) const = default;
 };
 
 // A GitHub user as you want to see them: the name your Slack plugin shows for
@@ -76,6 +80,8 @@ struct Column {
   std::vector<std::string> command;  // non-empty: a command column
   int width = 10;                    // command columns; built-ins size themselves
   int timeout = 10;                  // seconds
+  bool hidden = false;               // off, but kept in the file to turn back on
+  bool operator==(const Column&) const = default;
 };
 
 inline const std::vector<std::string> kColumns = {"repo", "number", "size", "state", "age", "author", "tags", "title"};
@@ -84,22 +90,25 @@ struct Config {
   int refresh_seconds = 120;
   int watch_seconds = 15;  // PRs a plugin marks "watch": true
   bool auto_update = true;  // false: only tell when a release is out
+  bool mouse = true;        // false: no mouse tracking, the terminal selects text
+  std::string start_view;   // the landing view's name; "" = the first
   long green_below = 200, red_from = 1000;
   // "title_strip": a regex cut out of every title shown, e.g. a ticket prefix.
   std::string title_strip;
   std::regex title_re;
   // Mirrors GitHub's own pull-requests page; the first is the landing view.
   std::vector<View> views = {
-      {"Created", "is:open author:@me", "", ""},
-      {"Review requests", "is:open review-requested:@me", "", ""},
-      {"Assigned", "is:open assignee:@me", "", ""},
-      {"Mentioned", "is:open mentions:@me", "", ""},
+      {"Created", "is:open author:@me", "", "", {}},
+      {"Review requests", "is:open review-requested:@me", "", "", {}},
+      {"Assigned", "is:open assignee:@me", "", "", {}},
+      {"Mentioned", "is:open mentions:@me", "", "", {}},
   };
   std::vector<Column> columns = [] {
     std::vector<Column> v;
     for (auto& n : kColumns) v.push_back({n, {}});
     return v;
   }();
+  std::string adhoc_query;  // --query: one unsaved view in place of `views` on screen
   std::vector<PluginConfig> plugins;
   std::map<std::string, Person> people;  // lowercased GitHub login -> person
 };
@@ -120,6 +129,8 @@ inline std::string parse_config(const std::string& text, Config& c) {
     c.refresh_seconds = std::max(10, j.value("refresh_seconds", c.refresh_seconds));
     c.watch_seconds = std::max(5, j.value("watch_seconds", c.watch_seconds));
     c.auto_update = j.value("auto_update", c.auto_update);
+    c.mouse = j.value("mouse", c.mouse);
+    c.start_view = j.value("start_view", c.start_view);
     c.title_strip = j.value("title_strip", c.title_strip);
     if (!c.title_strip.empty()) {
       try {
@@ -146,9 +157,14 @@ inline std::string parse_config(const std::string& text, Config& c) {
       c.views.clear();
       for (auto& v : j.at("views")) {
         View view{v.at("name").get<std::string>(), v.value("query", std::string("is:open")),
-                  v.value("plugin", std::string()), v.value("list", std::string())};
+                  v.value("plugin", std::string()), v.value("list", std::string()), {}};
         if (view.plugin.empty() != view.list.empty())
           return "view \"" + view.name + "\": plugin and list go together";
+        if (v.contains("sort")) {
+          view.sort = parse_sort(v.at("sort").get<std::string>());
+          if (!view.sort || (*view.sort == Sort::List && !view.is_list()))
+            return "view \"" + view.name + "\": sort is updated, created, size or repo (or list, in list views)";
+        }
         c.views.push_back(view);
       }
       if (c.views.empty()) return "views: needs at least one view";
@@ -169,8 +185,9 @@ inline std::string parse_config(const std::string& text, Config& c) {
       c.columns.clear();
       for (auto& v : j.at("columns")) {
         Column col;
-        if (v.is_string()) {
-          col.name = v.get<std::string>();
+        if (v.is_string() || !v.contains("command")) {  // a built-in: "repo", or {"name": "repo", "hidden": true}
+          col.name = v.is_string() ? v.get<std::string>() : v.at("name").get<std::string>();
+          col.hidden = v.is_object() && v.value("hidden", false);
           if (std::find(kColumns.begin(), kColumns.end(), col.name) == kColumns.end())
             return "columns: no column \"" + col.name + "\" (built in: " + join(kColumns) +
                    "; or {\"name\": ..., \"command\": [...]})";
@@ -180,11 +197,13 @@ inline std::string parse_config(const std::string& text, Config& c) {
           for (auto& a : col.command) a = expand_home(a);
           col.width = std::clamp(v.value("width", col.width), 1, 80);
           col.timeout = std::clamp(v.value("timeout", col.timeout), 1, 300);
+          col.hidden = v.value("hidden", false);
           if (col.command.empty()) return "column \"" + col.name + "\": empty command";
         }
         c.columns.push_back(col);
       }
-      if (c.columns.empty()) return "columns: needs at least one column";
+      if (std::all_of(c.columns.begin(), c.columns.end(), [](const Column& col) { return col.hidden; }))
+        return "columns: needs at least one column that isn't hidden";
     }
     if (c.plugins.size() > Plugins::kMaxPlugins)
       return "at most " + std::to_string(Plugins::kMaxPlugins) + " plugins";

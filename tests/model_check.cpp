@@ -92,6 +92,18 @@ int main() {
   assert(!local_match(p2, *preds, "someone"));
   p2.state = "MERGED";
   assert(local_match(p2, *parse_local("is:closed", err), ""));
+  // labels, and your own review
+  p2.labels = {"Bug", "needs review"};
+  assert(local_match(p2, *parse_local("label:bug", err), ""));
+  assert(local_match(p2, *parse_local("label:\"needs review\"", err), ""));
+  assert(!local_match(p2, *parse_local("-label:bug", err), ""));
+  assert(!local_match(p2, *parse_local("label:billing", err), ""));
+  assert(!local_match(p2, *parse_local("reviewed-by:@me", err), ""));
+  p2.my_review = "COMMENTED";
+  assert(local_match(p2, *parse_local("reviewed-by:@me", err), ""));
+  assert(!parse_local("reviewed-by:alice", err) && err.find("@me") != std::string::npos);
+  assert(parse_sort("size") == Sort::Size && parse_sort("list") == Sort::List && !parse_sort("age"));
+  assert(pr_json(p2)["labels"][1] == "needs review");
 
   // plugin protocol: full state per line
   PluginState st;

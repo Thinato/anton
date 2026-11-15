@@ -39,7 +39,7 @@ pick up a change. Comments are allowed, as in `config.json`.
 | `key` | required | one character; the key in anton. Unique. anton's own keys win a clash (`02-plugins.md`), so pick one anton doesn't use (capitals other than `G` are free) |
 | `command` | required | argv, non-empty, run without a shell. Substitution below; `$HOME`, `${HOME}` and a leading `~` are expanded first, as for plugin commands |
 | `tag` | the key | shown as `🤖 <tag>` in TAGS |
-| `label` | `review with <tag>` | flashed when you press the key, listed in `?` |
+| `label` | `review with <tag>` | flashed when you press the key, its button's text, listed in `?` |
 | `stdin` | none | `"diff"`: `gh pr diff <url>` is piped to the command, cut at 200 KB with a `[diff truncated at 200 KB]` line. Without it stdin is `/dev/null` |
 | `timeout` | `600` | seconds, 1–86400 |
 | `cwd` | anton's cwd | working directory, with `$HOME`/`~` expanded. Not used when the PR's repo has a clone (Local clones) |

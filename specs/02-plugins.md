@@ -44,7 +44,7 @@ In `~/.config/anton/config.json`:
 
 | key | default | |
 | --- | --- | --- |
-| `name` | required | referenced by list views; shown in errors and the `?` overlay |
+| `name` | required | referenced by list views; shown in errors and in Settings › General › Plugins |
 | `command` | required | argv, run without a shell, cwd = anton's cwd. `$HOME`, `${HOME}` and a leading `~` are expanded (only these: there's no shell), so `"$HOME/.local/bin/anton-slkx"` works in a config shared between people |
 | `rerun` | `"exit"` | `"exit"`: restart 5s after it exits (doubling to 5 min on repeated quick exits). `"refresh"`: run once per anton refresh. `"never"`: run once. |
 | `env` | `{}` | extra environment variables |
@@ -52,9 +52,9 @@ In `~/.config/anton/config.json`:
 ## Protocol: plugin → anton (stdout)
 
 One JSON object per line, UTF-8, `\n`-terminated. Lines that fail to parse are
-ignored and counted (shown in `?`). stderr is not protocol: each line flashes in
-the message line for 10s (warnings like a bad setting), and the last line is
-shown in the `?` overlay for debugging.
+ignored and counted (shown in Settings). stderr is not protocol: each line
+flashes in the message line for 10s (warnings like a bad setting), and the
+last line is shown in Settings › General › Plugins for debugging.
 
 ### `pr` — everything this plugin says about one PR
 
@@ -137,7 +137,8 @@ anton (see "Second path" in `01-anton.md`); a plugin only has to know URLs.
 ```
 
 The latest `health` per plugin is shown in the footer as `slack ●` (ok),
-`slack ○` (anything else), with `text` in `?`.
+`slack ○` (anything else), with `text` in Settings › General › Plugins,
+which also has a Restart button: it stops the plugin and runs it again now.
 
 ### Anything else
 
@@ -147,13 +148,17 @@ without breaking old anton builds.
 ### `actions` — keys the plugin handles (optional)
 
 ```json
-{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack"}]}
+{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"}]}
 ```
 
-Each `key` (one character) becomes a key on the selected PR; pressing it
-sends `{"action": id, "pr": url}` on the plugin's stdin and flashes the
-`label`. The latest `actions` line replaces the previous one; actions vanish
-while the plugin is down. anton's own keys win a clash. Listed in `?`.
+Each `key` (one character) becomes a key on the selected PR, and in the
+reader on the PR it shows; pressing it sends `{"action": id, "pr": url}` on
+the plugin's stdin and flashes the `label`. Each action is also a button
+(`v Toggle 👀`) in the list's button row and the reader's footer, and in the
+reader's outline under that plugin's marks; `button` (optional) is the short
+text for it, else the `label` is. The palette (`?`) lists them as
+`<label> · <plugin>`. The latest `actions` line replaces the previous one;
+actions vanish while the plugin is down. anton's own keys win a clash.
 
 ## Protocol: anton → plugin (stdin)
 
@@ -180,9 +185,11 @@ re-sends the PR's `pr` line. anton never updates plugin state on its own.
 - **STATE**: custom status per the ranking in `01-anton.md`.
 - **TAGS**: tags from all plugins, plugin order from config, then tag order.
   `glyph text`, joined by space; overflow becomes `+N` → `👀 alice +1`.
-- **Detail line** under the selected row: every tag and status as
-  `[plugin] glyph text — hint`, then `n read note` if a plugin attached one.
-- **Reader** (`⏎`): marks on the tab of their file, above.
+- **Detail** under the list (third line): per plugin, its name, status and
+  tags (`glyph text hint`), then `n read note` if a plugin attached one.
+- **Reader** (`⏎`): marks on the tab of their file, above; on a wide
+  terminal the outline has a block per plugin with marks on the file: its
+  counts, the commit they're for, and its action buttons.
 - **Note overlay** (`n`): every plugin's note on the selected PR, headed
   `[plugin]` when there's more than one. `j`/`k`, `space`/PgUp/PgDn, `g`/`G`
   scroll; `y` copies the text; `esc`, `q` or `n` closes.
