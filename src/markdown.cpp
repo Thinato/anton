@@ -219,6 +219,7 @@ struct Renderer {
   int test_dir = 0;        // ...and that badge's directive line
   std::vector<size_t> line_starts;
   std::vector<Line> out;
+  std::vector<Block>* blocks = nullptr;  // blocks(): collected here instead of laid out in lines
 
   // A container's prefix: "│ " for a quote, the marker then its width in
   // spaces for a list item.
@@ -308,6 +309,16 @@ struct Renderer {
         if (expired(d, today)) spans.push_back({" · snooze expired " + d.snooze, Dim});
         else if (!d.snooze.empty()) spans.push_back({" · snoozed until " + d.snooze, Warn});
       }
+      test_next = !d.import;
+      if (!d.import) test_dir = d.line;
+      if (blocks) {
+        Block b;
+        b.kind = Block::Badge;
+        b.spans = std::move(spans);
+        b.src = d.line;
+        blocks->push_back(std::move(b));
+        continue;
+      }
       if (gap && !out.empty()) out.emplace_back();
       gap = false;
       gap_depth = SIZE_MAX;
@@ -318,14 +329,13 @@ struct Renderer {
         l.part = Part::Badge;
         out.push_back(std::move(l));
       }
-      test_next = !d.import;
-      if (!d.import) test_dir = d.line;
     }
   }
 
   void emit(std::vector<Span> spans, int src, int head = 0, Part part = Part::Text) {
     if (src > 0) badges_before(src);
     if (!in_table) test_next = false;
+    if (blocks) return emit_block(std::move(spans), src, head);
     if (gap && !out.empty()) {
       Line blank;
       for (size_t i = 0; i < boxes.size() && i < gap_depth; ++i) add(blank.spans, boxes[i].rest, boxes[i].style);
@@ -345,11 +355,29 @@ struct Renderer {
     out.push_back(std::move(l));
   }
 
-  // The block's inline text, wrapped and emitted.
+  // blocks(): the line as a block, in the quotes and list items open now.
+  void emit_block(std::vector<Span> spans, int src, int head) {
+    Block b;
+    b.kind = in_code ? Block::Code : head ? Block::Heading : Block::Para;
+    b.spans = std::move(spans);
+    b.src = src;
+    b.heading = head;
+    for (auto& bx : boxes) {
+      bool quote = bx.first == "│ ";
+      (quote ? b.quote : b.indent)++;
+      if (!quote) b.bullet = bx.used ? "" : bx.first;
+      bx.used = true;
+    }
+    blocks->push_back(std::move(b));
+  }
+
+  // The block's inline text, wrapped and emitted (blocks(): emitted whole).
   void flush() {
     flush_html_text();
-    if (text_of(inl).find_first_not_of(" \n") != std::string::npos)
-      for (auto& l : wrap(inl, avail())) emit(std::move(l), inl_src, heading);
+    if (text_of(inl).find_first_not_of(" \n") != std::string::npos) {
+      if (blocks) emit(inl, inl_src, heading);
+      else for (auto& l : wrap(inl, avail())) emit(std::move(l), inl_src, heading);
+    }
     inl.clear();
     inl_src = 0;
   }
@@ -457,7 +485,8 @@ struct Renderer {
 
   // Never wrapped: a cut line ends in "…" (y copies the whole text).
   void end_code_line() {
-    emit({{"  " + cut(code_line, std::max(2, avail() - 2)), Dim}}, code_src);
+    if (blocks) emit({{code_line, Code}}, code_src);
+    else emit({{"  " + cut(code_line, std::max(2, avail() - 2)), Dim}}, code_src);
     last_code_src = code_src;
     code_line.clear();
     code_src = 0;
@@ -486,6 +515,27 @@ struct Renderer {
       }
     const int test = test_next ? test_dir : 0;
     test_next = false;
+    if (blocks) {
+      Block b;
+      b.kind = Block::Table;
+      b.test = test;
+      for (auto& r : rows) {
+        Block::Row row{{}, r.src, r.head};
+        for (size_t c = 0; c < ncols; ++c) {
+          std::vector<Span> cell = c < r.cells.size() ? r.cells[c] : std::vector<Span>{};
+          for (auto& sp : cell) sp.style |= col_style[c] | (r.head ? Bold : 0);
+          row.cells.push_back(std::move(cell));
+        }
+        b.rows.push_back(std::move(row));
+      }
+      for (size_t c = 0; c < ncols; ++c) {
+        MD_ALIGN al = c < aligns.size() ? aligns[c] : MD_ALIGN_DEFAULT;
+        b.align.push_back(al == MD_ALIGN_RIGHT ? 2 : al == MD_ALIGN_CENTER ? 1 : 0);
+      }
+      b.src = rows[0].src;
+      blocks->push_back(std::move(b));
+      return;
+    }
     std::vector<int> w(ncols, 1);
     for (auto& r : rows)
       for (size_t c = 0; c < r.cells.size(); ++c) w[c] = std::max(w[c], cells(text_of(r.cells[c])));
@@ -578,13 +628,18 @@ struct Renderer {
         break;
       }
       case MD_BLOCK_HR:
-        emit({{repeat("─", avail()), Dim}}, 0);
+        if (blocks) {
+          blocks->emplace_back();
+          blocks->back().kind = Block::Rule;
+        } else {
+          emit({{repeat("─", avail()), Dim}}, 0);
+        }
         set_gap();
         break;
       case MD_BLOCK_H:
         heading = static_cast<int>(static_cast<MD_BLOCK_H_DETAIL*>(detail)->level);
         base = Bold;
-        add(inl, std::string(static_cast<size_t>(heading), '#') + " ", Bold);
+        if (!blocks) add(inl, std::string(static_cast<size_t>(heading), '#') + " ", Bold);
         break;
       case MD_BLOCK_CODE: in_code = true; break;
       case MD_BLOCK_TABLE:
@@ -981,9 +1036,10 @@ std::vector<Count> tally(const std::vector<Mark>& marks, const std::vector<Direc
   return out;
 }
 
-std::vector<Line> render(const std::string& markdown, int width, const std::string& today) {
-  std::string doc = printable(markdown);
-  Renderer r(doc, std::max(10, width), today);
+namespace {
+
+// md4c over doc, into r.
+void parse(const std::string& doc, Renderer& r) {
   MD_PARSER p{};
   p.flags = MD_DIALECT_GITHUB;
   p.enter_block = [](MD_BLOCKTYPE t, void* d, void* u) { return call(u, [&](Renderer& r) { r.enter_block(t, d); }); };
@@ -995,7 +1051,24 @@ std::vector<Line> render(const std::string& markdown, int width, const std::stri
   };
   md_parse(doc.data(), static_cast<MD_SIZE>(doc.size()), &p, &r);
   r.badges_before(INT_MAX);  // directives after the last block
+}
+
+}  // namespace
+
+std::vector<Line> render(const std::string& markdown, int width, const std::string& today) {
+  std::string doc = printable(markdown);
+  Renderer r(doc, std::max(10, width), today);
+  parse(doc, r);
   return std::move(r.out);
+}
+
+std::vector<Block> blocks(const std::string& markdown, const std::string& today) {
+  std::string doc = printable(markdown);
+  Renderer r(doc, 1 << 20, today);
+  std::vector<Block> out;
+  r.blocks = &out;
+  parse(doc, r);
+  return out;
 }
 
 std::string plain(const Line& l) {

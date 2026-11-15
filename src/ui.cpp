@@ -24,14 +24,7 @@ namespace anton {
 using namespace ftxui;
 
 // Case-insensitive subsequence match: "bcore" finds "brick-so/core".
-bool fuzzy(const std::string& hay, const std::string& needle) {
-  size_t i = 0;
-  for (char c : hay)
-    if (i < needle.size() && std::tolower(static_cast<unsigned char>(c)) ==
-                                 std::tolower(static_cast<unsigned char>(needle[i])))
-      ++i;
-  return i == needle.size();
-}
+bool fuzzy(const std::string& hay, const std::string& needle) { return fuzzy_find(hay, needle).has_value(); }
 
 namespace {
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <ctime>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -312,6 +313,24 @@ inline std::vector<Option> complete(const std::string& word, const Seen& seen, b
   }
   if (out.size() > 8) out.resize(8);
   return out;
+}
+
+// The palettes' match (the TUI's `?`, anton-gui's Ctrl K): needle's
+// characters in hay in order, ignoring case ("bcore" finds "brick-so/core").
+// The byte offsets of hay that matched, to highlight them: a contiguous run
+// when needle appears whole ("temoc" in "Run temoc specs"), else the
+// earliest subsequence. nullopt when it doesn't match; empty for "".
+inline std::optional<std::vector<size_t>> fuzzy_find(const std::string& hay, const std::string& needle) {
+  std::vector<size_t> at;
+  if (auto whole = lower(hay).find(lower(needle)); whole != std::string::npos) {
+    for (size_t i = 0; i < needle.size(); ++i) at.push_back(whole + i);
+    return at;
+  }
+  for (size_t i = 0; i < hay.size() && at.size() < needle.size(); ++i)
+    if (std::tolower(static_cast<unsigned char>(hay[i])) == std::tolower(static_cast<unsigned char>(needle[at.size()])))
+      at.push_back(i);
+  if (at.size() < needle.size()) return std::nullopt;
+  return at;
 }
 
 // The word of `text` that ends at byte `cursor`: [start, cursor).

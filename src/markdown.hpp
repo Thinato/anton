@@ -71,6 +71,30 @@ inline bool expired(const Directive& d, const std::string& today) {
 // (`sum?`) and dims its `# comment` ones.
 std::vector<Line> render(const std::string& markdown, int width, const std::string& today = "");
 
+// The same parse as render(), as blocks a GUI lays out itself (anton-gui,
+// 06-gui.md): nothing wrapped, cut or boxed, headings without their #s.
+// Every block keeps its source line, as render()'s lines do, so marks find
+// them. A badge is a temoc directive; a Code block is one line of a code
+// block (consecutive ones make the block).
+struct Block {
+  enum Kind { Para, Heading, Code, Rule, Badge, Table } kind = Para;
+  std::vector<Span> spans;  // the text; a "\n" span is a hard break
+  int src = 0;
+  int heading = 0;      // 1-6
+  int quote = 0;        // how many quotes it is in
+  int indent = 0;       // how many list items it is in
+  std::string bullet;   // "• ", "1. ", "☐ " on a list item's first block
+  struct Row {
+    std::vector<std::vector<Span>> cells;
+    int src = 0;
+    bool head = false;
+  };
+  std::vector<Row> rows;  // a table's, the header first
+  std::vector<int> align;  // per column: 0 left, 1 center, 2 right
+  int test = 0;            // a temoc test table: its directive's line
+};
+std::vector<Block> blocks(const std::string& markdown, const std::string& today = "");
+
 // Marks on one file, from every plugin, laid onto its rendered lines (which
 // were rendered kGutter cells narrower than width). Every line gets a
 // gutter holding the glyph of the worst mark on its source line, on the
