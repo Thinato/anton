@@ -247,6 +247,15 @@ int main() {
   assert(j["tags"][0]["text"] == "failed" && j["tags"][0]["hint"] == "temoc: hooks.md: " + why);
   n = j["note"];
   assert(n.starts_with("**temoc failed**: hooks.md: " + why) && n.find("- temoc failed: " + why) != std::string::npos);
+  // ...and another file of that run that passed doesn't get its banner
+  o.files = {"hooks.md", "fine.md"};
+  fold_all(o, r, R"({"type":"row_finished","file":"fine.md","table":1,"line":5,"status":"passed","checks":[]})");
+  end(r, o);
+  assert(r.files["fine.md"].banner.empty() && r.files["hooks.md"].banner.size() == 1);
+  // while a rerun goes, the note no longer leads with the last run's failure
+  PrState rerun = done(r, o);
+  rerun.running = true;
+  assert(!json::parse(pr_line(PR, rerun))["note"].get<std::string>().starts_with("**temoc failed**"));
 
   // The repo's setup command failed: temoc never ran
   o = {}, r = {};

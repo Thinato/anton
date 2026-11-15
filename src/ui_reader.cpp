@@ -299,13 +299,15 @@ Element Ui::render_reader() {
   } else {
     marks = marks_on(reader_url, ft->path, b.head, &stale);
     std::string key = ft->path + '\0' + day + '\0' + ft->text;
-    for (auto& m : marks) key += '\0' + std::to_string(m.line) + m.level + '\0' + m.glyph + '\0' + m.text;
+    for (auto& m : marks)
+      key += '\0' + std::to_string(m.line) + m.level + (m.banner ? "!" : "") + '\0' + m.glyph + '\0' + m.text;
     for (auto& s : stale) key += '\0' + s;
     if (reader_md.key != key || reader_md.width != w) {
       std::vector<md::Line> lines;
       for (auto& s : stale)
         for (auto& l : md::render(s, w)) {
           for (auto& sp : l.spans) sp.style |= md::Warn;
+          l.src = 0;  // not the file's lines: jumps and marks skip it
           lines.push_back(std::move(l));
         }
       if (!stale.empty()) lines.emplace_back();
@@ -344,10 +346,12 @@ Element Ui::render_reader() {
     for (auto* t : tests)
       if (t->line < d->line) after = t->line;
     std::string name;
+    int seen = 0;
     for (auto& l : lines)
-      if (l.heading > 0 && l.src > after && l.src < d->line) {
+      if (l.heading > 0 && l.src > after && l.src < d->line && l.src != seen) {  // a wrapped heading's first line
+        seen = l.src;
         name = trim_left(md::plain(l));
-        name = trim_left(name.substr(name.find_first_not_of('#')));
+        name = trim_left(name.substr(std::min(name.size(), name.find_first_not_of('#'))));
       }
     return name.empty() ? d->target.substr(0, d->target.find('#')) : name;
   };
@@ -538,7 +542,8 @@ Element Ui::render_reader() {
       int li = scroll + r;
       md::Line l = lines[static_cast<size_t>(li)];
       bool lead = l.src > 0 && (li == 0 || lines[static_cast<size_t>(li - 1)].src != l.src);  // its source line's first
-      bool header = l.test && l.head && lead, row = l.test && !l.head && lead && l.part == md::Part::Table;
+      bool spec = ft && ft->spec;  // the description's tables have no file to run
+      bool header = spec && l.test && l.head && lead, row = spec && l.test && !l.head && lead && l.part == md::Part::Table;
       Element gut;
       if (runner && !l.spans.empty() && (header || (row && reader_hover == li))) {
         l.spans.erase(l.spans.begin());
@@ -549,7 +554,7 @@ Element Ui::render_reader() {
       Element e = gut ? hbox({gut, md_line(l)}) : md_line(l);
       if (header && l.test == focus) e = truecolor() ? e | bg(Pal::Sel) : e | inverted;
       left = hbox({text(" "), e});
-      if (l.test) {
+      if (spec && l.test) {
         Hit& h = hit(left);
         h.click = [this, path, t = l.test] { reader_focus[path] = t; };
         h.hover = [this, li, row] { reader_hover = row ? li : -1; };
@@ -691,6 +696,7 @@ bool Ui::reader_key(const Event& e) {
   size_t n = 1 + (fs ? fs->tabs.size() : 0);
   reader_tab = std::min(reader_tab, n - 1);
   std::string path = reader_tab ? fs->tabs[reader_tab - 1].path : "";
+  reader_hover = -1;  // a scroll or a new tab moves the rows: the mouse is over another one now
   if (e == Event::Escape || e == Event::Character('q')) mode = Mode::Normal;
   else if (e == Event::Tab || e == Event::Character(']')) reader_tab = (reader_tab + 1) % n;
   else if (e == Event::TabReverse || e == Event::Character('[')) reader_tab = (reader_tab + n - 1) % n;

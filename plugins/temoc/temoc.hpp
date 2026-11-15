@@ -368,16 +368,17 @@ inline void set_tables(FileRes& f, std::vector<Table> tables) {
 
 inline std::string failure(const Outcome& o);
 
-// The run is over: whatever it left running wasn't finished, and when it
-// failed (a timeout, a crash) each file it ran without a reason yet gets
-// that one as a banner.
+// The run is over: whatever it left running wasn't finished, and when the
+// run as a whole failed (a timeout, a crash: not one file's hooks or
+// run_error, which fold() put on that file) each file it ran without a
+// reason yet gets that one as a banner.
 inline void end(Results& r, const Outcome& o) {
   for (auto& [_, f] : r.files) {
     f.running = false;
     for (auto& t : f.tables) t.running = false;
     std::erase_if(f.rows, [](const auto& kv) { return kv.second.st == St::Running; });
   }
-  if (std::string why = failure(o); o.error.empty() && !why.empty())
+  if (std::string why = failure(o); o.error.empty() && o.setup_failures.empty() && o.run_errors.empty() && !why.empty())
     for (auto& file : o.files)
       if (FileRes& f = r.files[file]; f.banner.empty()) f.banner.push_back(why.substr(0, why.find('\n')));
 }
@@ -642,7 +643,11 @@ inline std::string pr_line(const std::string& url, const PrState& st) {
   }
   j["tags"] = json::array({t});
   auto dump = [&] { return j.dump(-1, ' ', false, json::error_handler_t::replace); };
-  std::string n = o ? note(*o, st.results) : "";
+  // While a run goes, the last run's failure is no longer news: the results
+  // speak for themselves.
+  Outcome quiet;
+  quiet.finished = true;  // no failure of its own
+  std::string n = st.running ? (st.results.files.empty() ? "" : note(quiet, st.results)) : o ? note(*o, st.results) : "";
   std::vector<Mark> ms = marks_of(st.results);
   if (!ms.empty() || !st.results.command.empty()) {
     size_t reserve = std::min<size_t>(llm::escaped_size(n), 8192) + 10;  // + ,"note":
