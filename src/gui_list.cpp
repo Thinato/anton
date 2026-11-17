@@ -156,16 +156,18 @@ static uint32_t repo_dot(const Theme& t, size_t i) {
 }
 
 void Gui::views_pane() {
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8 * k(), 8 * k()));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * k(), 6 * k()));
   bool shown = ImGui::Begin("Views###views", nullptr, ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   ImDrawList* d = ImGui::GetWindowDrawList();
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 2 * k()));
+  uint32_t hover = t.dark ? t.border_muted : t.inset;
+  float h = 24 * k(), fs = ImGui::GetFontSize();
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 1 * k()));
   for (size_t i = 0; i < tabs.size(); ++i) {
     ImGui::PushID(static_cast<int>(i));
     ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x, h = 32 * k();
+    float w = ImGui::GetContentRegionAvail().x;
     if (ImGui::InvisibleButton("##view", ImVec2(w, h))) switch_view(i);
     bool hov = ImGui::IsItemHovered();
     if (ImGui::BeginPopupContextItem("##viewmenu")) {
@@ -174,89 +176,73 @@ void Gui::views_pane() {
     }
     if (hov && tabs[i].saved) ImGui::SetTooltip("%s", tabs[i].v.query.c_str());
     if (i == active) d->AddRectFilled(p, p + ImVec2(w, h), col(t.sel), 6 * k());
-    else if (hov) d->AddRectFilled(p, p + ImVec2(w, h), col(t.dark ? t.border_muted : t.inset), 6 * k());
-    float x = p.x + 8 * k();
-    // the count pill on the right, then the plugin, then the name
+    else if (hov) d->AddRectFilled(p, p + ImVec2(w, h), col(hover), 6 * k());
+    // the count on the right (mono, muted), then the plugin, then the name
     auto rs = rows(i);
     std::string count = rs ? std::to_string(rs->size()) : "…";
-    ImGui::PushFont(f.medium, 12 * k());
-    ImVec2 cs = ImGui::CalcTextSize(count.c_str());
-    float cw = std::max(20 * k(), cs.x + 12 * k()), cx = p.x + w - 8 * k() - cw;
-    d->AddRectFilled(ImVec2(cx, p.y + (h - 18 * k()) / 2), ImVec2(cx + cw, p.y + (h + 18 * k()) / 2), col(t.neutral_muted), 9 * k());
-    d->AddText(ImVec2(cx + (cw - cs.x) / 2, p.y + (h - cs.y) / 2), col(t.fg), count.c_str());
-    ImGui::PopFont();
-    float right = cx - 8 * k();
+    ImVec2 cs = f.mono->CalcTextSizeA(code() * k(), FLT_MAX, 0, count.c_str());
+    float right = p.x + w - 8 * k() - cs.x;
+    d->AddText(f.mono, code() * k(), ImVec2(right, p.y + (h - cs.y) / 2), col(t.muted), count.c_str());
+    right -= 6 * k();
     if (tabs[i].v.is_list()) {
-      ImGui::PushFont(f.regular, 11 * k());
-      ImVec2 ps = ImGui::CalcTextSize(tabs[i].v.plugin.c_str());
+      ImVec2 ps = f.regular->CalcTextSizeA(10 * k(), FLT_MAX, 0, tabs[i].v.plugin.c_str());
       right -= ps.x;
-      d->AddText(ImVec2(right, p.y + (h - ps.y) / 2), col(t.muted), tabs[i].v.plugin.c_str());
-      right -= 8 * k();
-      ImGui::PopFont();
+      d->AddText(f.regular, 10 * k(), ImVec2(right, p.y + (h - ps.y) / 2), col(t.muted), tabs[i].v.plugin.c_str());
+      right -= 6 * k();
     }
-    ImGui::PushFont(i == active ? f.semibold : f.regular, 0.f);
-    std::string name = tabs[i].v.name;
-    ImVec2 ns = ImGui::CalcTextSize(name.c_str());
-    d->PushClipRect(ImVec2(x, p.y), ImVec2(right - (modified(i) ? 12 * k() : 0), p.y + h), true);
-    d->AddText(ImVec2(x, p.y + (h - ns.y) / 2), col(t.fg), name.c_str());
-    d->PopClipRect();
+    ImFont* nf = i == active ? f.semibold : f.regular;
+    const std::string& name = tabs[i].v.name;
+    float x = p.x + 8 * k(), nw = nf->CalcTextSizeA(fs, FLT_MAX, 0, name.c_str()).x;
+    float dot = modified(i) ? 10 * k() : 0;
+    ImGui::RenderTextEllipsis(d, ImVec2(x, p.y + (h - fs) / 2), ImVec2(right - dot, p.y + h), right - dot, name.c_str(), nullptr, nullptr);
     if (modified(i))  // filters changed since saved: the yellow dot
-      d->AddCircleFilled(ImVec2(std::min(x + ns.x + 8 * k(), right - 6 * k()), p.y + h / 2), 3 * k(), col(t.attention));
-    ImGui::PopFont();
+      d->AddCircleFilled(ImVec2(std::min(x + nw + 6 * k(), right - 4 * k()), p.y + h / 2), 3 * k(), col(t.attention));
     ImGui::PopID();
   }
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x, h = 32 * k();
+    float w = ImGui::GetContentRegionAvail().x;
     if (ImGui::InvisibleButton("##newview", ImVec2(w, h))) act("+");
-    if (ImGui::IsItemHovered()) d->AddRectFilled(p, p + ImVec2(w, h), col(t.dark ? t.border_muted : t.inset), 6 * k());
-    icon_plus(d, ImVec2(p.x + 8 * k(), p.y + (h - 14 * k()) / 2), 14 * k(), col(t.muted));
-    d->AddText(ImVec2(p.x + 30 * k(), p.y + (h - ImGui::GetTextLineHeight()) / 2), col(t.muted), "New view");
+    if (ImGui::IsItemHovered()) d->AddRectFilled(p, p + ImVec2(w, h), col(hover), 6 * k());
+    icon_plus(d, ImVec2(p.x + 8 * k(), p.y + (h - 10 * k()) / 2), 10 * k(), col(t.muted));
+    d->AddText(ImVec2(p.x + 24 * k(), p.y + (h - fs) / 2), col(t.muted), "New view");
   }
-  ImGui::PopStyleVar();
   // the repositories in this view: a click scopes every view to one
   ImVec2 p = ImGui::GetCursorScreenPos();
   float w = ImGui::GetContentRegionAvail().x;
-  ImGui::Dummy(ImVec2(w, 8 * k()));
-  d->AddLine(ImVec2(p.x + 8 * k(), p.y + 4 * k()), ImVec2(p.x + w - 8 * k(), p.y + 4 * k()), col(t.border_muted));
-  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8 * k());
-  ImGui::Dummy(ImVec2(1, 2 * k()));
-  ImGui::SetCursorPosX(16 * k());
-  section("Repositories");
+  ImGui::Dummy(ImVec2(w, 13 * k()));
+  d->AddLine(ImVec2(p.x + 8 * k(), p.y + 6.5f * k()), ImVec2(p.x + w - 8 * k(), p.y + 6.5f * k()), col(t.border_muted));
+  {
+    ImVec2 q = ImGui::GetCursorScreenPos();
+    float sh = 22 * k(), sfs = 11 * k();
+    d->AddText(f.semibold, sfs, ImVec2(q.x + 8 * k(), q.y + (sh - sfs) / 2), col(t.muted), "Repositories");
+    ImGui::Dummy(ImVec2(w, sh));
+  }
   std::map<std::string, int> counts;
   for (auto& pr : cur_rows) ++counts[pr.repo];
   for (auto& r : repos)
     if (!counts.count(r)) counts[r] = 0;
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 2 * k()));
   size_t n = 0;
   for (auto& [repo, cnt] : counts) {
     ImVec2 q = ImGui::GetCursorScreenPos();
-    float h = 28 * k();
     bool on = scope == "repo:" + repo;
     if (ImGui::InvisibleButton(("##repo" + repo).c_str(), ImVec2(w, h))) {
-      if (on) {
-        scope.clear();
-        reset_selection();
-        refresh();
-      } else {
-        scope = "repo:" + repo;
-        reset_selection();
-        refresh();
-      }
+      scope = on ? "" : "repo:" + repo;
+      reset_selection();
+      refresh();
     }
     if (ImGui::IsItemHovered()) {
-      d->AddRectFilled(q, q + ImVec2(w, h), col(t.dark ? t.border_muted : t.inset), 6 * k());
+      d->AddRectFilled(q, q + ImVec2(w, h), col(hover), 6 * k());
       ImGui::SetTooltip(on ? "Show every repository" : "Only %s, in every view (x clears)", repo.c_str());
     }
     if (on) d->AddRectFilled(q, q + ImVec2(w, h), col(t.sel), 6 * k());
     d->AddCircleFilled(ImVec2(q.x + 12 * k(), q.y + h / 2), 4 * k(), col(repo_dot(t, n++)));
-    float ty = q.y + (h - ImGui::GetTextLineHeight()) / 2;
-    d->AddText(ImVec2(q.x + 24 * k(), ty), col(t.fg), repo.c_str());
-    ImGui::PushFont(nullptr, 12 * k());
     std::string c = std::to_string(cnt);
-    ImVec2 cs = ImGui::CalcTextSize(c.c_str());
-    d->AddText(ImVec2(q.x + w - 8 * k() - cs.x, q.y + (h - cs.y) / 2), col(t.muted), c.c_str());
-    ImGui::PopFont();
+    ImVec2 cs = f.mono->CalcTextSizeA(code() * k(), FLT_MAX, 0, c.c_str());
+    float right = q.x + w - 8 * k() - cs.x;
+    ImGui::RenderTextEllipsis(d, ImVec2(q.x + 24 * k(), q.y + (h - fs) / 2), ImVec2(right - 6 * k(), q.y + h), right - 6 * k(),
+                              repo.c_str(), nullptr, nullptr);
+    d->AddText(f.mono, code() * k(), ImVec2(right, q.y + (h - cs.y) / 2), col(t.muted), c.c_str());
   }
   ImGui::PopStyleVar();
   ImGui::End();
@@ -320,23 +306,29 @@ void Gui::filter_bar() {
   bool list = view().is_list();
   ImDrawList* d = ImGui::GetWindowDrawList();
   float W = ImGui::GetContentRegionAvail().x;
+  uint32_t hover = t.dark ? t.border_muted : t.inset;
+  // Sort and Columns' widths: they go on the query's row, after it
+  std::string sort_text = sort_label(view().sort_or_default());
+  float fs = ImGui::GetFontSize(), bh = 24 * k();
+  float sort_w = f.regular->CalcTextSizeA(fs, FLT_MAX, 0, "Sort ").x + f.medium->CalcTextSizeA(fs, FLT_MAX, 0, sort_text.c_str()).x + 30 * k();
+  float cols_w = f.medium->CalcTextSizeA(fs, FLT_MAX, 0, "Columns").x + 34 * k();
   // the query, in an input like GitHub's filter box
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    float h = 32 * k();
-    d->AddRectFilled(p, p + ImVec2(W, h), col(t.input_bg), 6 * k());
+    float h = bh, qw = W - sort_w - cols_w - 12 * k();
+    d->AddRectFilled(p, p + ImVec2(qw, h), col(t.input_bg), 6 * k());
     bool active_q = ImGui::GetActiveID() == ImGui::GetID("##query");
-    d->AddRect(p, p + ImVec2(W, h), col(active_q ? t.accent : t.border), 6 * k(), active_q ? 2.f : 1.f);
-    icon_filter(d, ImVec2(p.x + 10 * k(), p.y + (h - 14 * k()) / 2), 14 * k(), col(t.muted));
+    d->AddRect(p, p + ImVec2(qw, h), col(active_q ? t.accent : t.border), 6 * k(), active_q ? 2.f : 1.f);
+    icon_filter(d, ImVec2(p.x + 8 * k(), p.y + (h - 12 * k()) / 2), 12 * k(), col(t.muted));
     if (!active_q && !q_dirty) qbuf = q;
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 32 * k(), p.y + (h - (12 * k() + 6 * k())) / 2));
-    ImGui::PushFont(f.mono, 12 * k());
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 3 * k()));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 28 * k(), p.y + (h - (code() * k() + 4 * k())) / 2));
+    ImGui::PushFont(f.mono, code() * k());
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 2 * k()));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, 0);
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, 0);
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, 0);
-    ImGui::SetNextItemWidth(W - 32 * k() - (active_q ? 10 : 140) * k());
+    ImGui::SetNextItemWidth(qw - 36 * k());
     if (focus_query) {
       ImGui::SetKeyboardFocusHere();
       focus_query = false;
@@ -353,56 +345,78 @@ void Gui::filter_bar() {
       q_dirty = false;
       if (!same_query(qbuf, q)) apply_query(qbuf);
     }
-    if (!editing) {
-      ImGui::PushFont(nullptr, 12 * k());
-      const char* hint = "click a chip or type";
-      ImVec2 hs = ImGui::CalcTextSize(hint);
-      d->AddText(ImVec2(p.x + W - 10 * k() - hs.x, p.y + (h - hs.y) / 2), col(t.muted), hint);
-      ImGui::PopFont();
-    } else {  // what Tab would complete
+    if (editing) {  // what Tab would complete
       size_t ws = word_start(qbuf, qbuf.size());
       auto comps = complete(qbuf.substr(ws), seen(), list);
       if (!comps.empty()) {
-        ImGui::SetNextWindowPos(ImVec2(p.x + 32 * k(), p.y + h + 2 * k()));
+        ImGui::SetNextWindowPos(ImVec2(p.x + 28 * k(), p.y + h + 2 * k()));
         ImGui::BeginTooltip();
         for (size_t i = 0; i < comps.size() && i < 8; ++i) {
           segments({{comps[i].label, i == 0 ? t.accent : t.fg}, {comps[i].hint.empty() ? "" : "   " + comps[i].hint, t.muted}},
-                   f.mono, 12);
+                   f.mono, code());
         }
         text("Tab completes", t.muted, nullptr, 11);
         ImGui::EndTooltip();
       }
     }
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 10 * k()));
+    // Sort and Columns
+    ImVec2 sp(p.x + qw + 6 * k(), p.y);
+    ImGui::SetCursorScreenPos(sp);
+    if (ImGui::InvisibleButton("##sort", ImVec2(sort_w, bh))) ImGui::OpenPopup("##sortmenu");
+    bool hov = ImGui::IsItemHovered();
+    d->AddRectFilled(sp, sp + ImVec2(sort_w, bh), col(hov ? hover : t.btn), 6 * k());
+    d->AddRect(sp, sp + ImVec2(sort_w, bh), col(t.border), 6 * k());
+    float ty = sp.y + (bh - fs) / 2, sx = f.regular->CalcTextSizeA(fs, FLT_MAX, 0, "Sort ").x;
+    d->AddText(f.regular, fs, ImVec2(sp.x + 8 * k(), ty), col(t.muted), "Sort");
+    d->AddText(f.medium, fs, ImVec2(sp.x + 8 * k() + sx, ty), col(t.fg), sort_text.c_str());
+    icon_chevron(d, ImVec2(sp.x + sort_w - 16 * k(), sp.y + (bh - 8 * k()) / 2), 8 * k(), col(t.muted));
+    ImVec2 cp(sp.x + sort_w + 6 * k(), p.y);
+    ImGui::SetCursorScreenPos(cp);
+    if (ImGui::InvisibleButton("##columns", ImVec2(cols_w, bh))) ImGui::OpenPopup("##colmenu");
+    hov = ImGui::IsItemHovered();
+    d->AddRectFilled(cp, cp + ImVec2(cols_w, bh), col(hov ? hover : t.btn), 6 * k());
+    d->AddRect(cp, cp + ImVec2(cols_w, bh), col(t.border), 6 * k());
+    icon_columns(d, ImVec2(cp.x + 8 * k(), cp.y + (bh - 12 * k()) / 2), 12 * k(), col(t.muted));
+    d->AddText(f.medium, fs, ImVec2(cp.x + 26 * k(), ty), col(t.fg), "Columns");
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * k(), 6 * k()));
+    if (ImGui::BeginPopup("##sortmenu")) {
+      static const char* what[] = {"the plugin's order", "last updated first", "newest first", "biggest first", "by repo"};
+      for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo}) {
+        if (s == Sort::List && !list) continue;
+        if (ImGui::MenuItem(sort_label(s).c_str(), what[static_cast<int>(s)], view().sort_or_default() == s)) set_sort(s);
+      }
+      ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("##colmenu")) {  // View › Columns, the same entries
+      for (auto& mn : menus())
+        for (auto& c : mn.items)
+          if (mn.title == "View" && c.label == "Columns") draw_menu(c.sub);
+      ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 6 * k()));
   }
-  // the chips, "+ Filter", then Sort and Columns on the right
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * k(), 6 * k()));
+  // the chips and "+ Filter", 22px
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4 * k(), 4 * k()));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * k(), 6 * k()));
-  float x0 = ImGui::GetCursorPosX(), xmax = x0 + ImGui::GetContentRegionAvail().x, right_w = 0;
-  // Sort and Columns' width, measured first so chips wrap before them
-  std::string sort_text = sort_label(view().sort_or_default());
-  ImGui::PushFont(f.medium, 12 * k());
-  right_w = ImGui::CalcTextSize(("Sort " + sort_text).c_str()).x + 46 * k() + ImGui::CalcTextSize("Columns").x + 44 * k() + 6 * k();
-  ImGui::PopFont();
+  float x0 = ImGui::GetCursorPosX(), xmax = x0 + ImGui::GetContentRegionAvail().x;
+  float cfs = 11 * k();
   auto chip = [&](const std::string& id, const std::string& key, const std::string& value, bool on) {
-    ImGui::PushFont(f.medium, 12 * k());
-    ImVec2 ks = ImGui::CalcTextSize(key.c_str()), vs = ImGui::CalcTextSize(value.c_str());
-    float h = 26 * k(), w = 10 * k() + ks.x + 4 * k() + vs.x + 6 * k() + 10 * k() + 10 * k();
-    float avail = xmax - ImGui::GetCursorPosX() - right_w;
-    if (ImGui::GetCursorPosX() > x0 + 1 && w > avail) ImGui::NewLine();
+    ImVec2 ks = f.regular->CalcTextSizeA(cfs, FLT_MAX, 0, key.c_str()), vs = f.medium->CalcTextSizeA(cfs, FLT_MAX, 0, value.c_str());
+    float h = 22 * k(), w = 8 * k() + ks.x + vs.x + 4 * k() + 8 * k() + 8 * k();
+    if (ImGui::GetCursorPosX() > x0 + 1 && w > xmax - ImGui::GetCursorPosX()) ImGui::NewLine();
     ImVec2 p = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::InvisibleButton(id.c_str(), ImVec2(w, h));
     bool hov = ImGui::IsItemHovered();
-    bool on_x = on && hov && ImGui::GetIO().MousePos.x > p.x + w - 22 * k();
-    d->AddRectFilled(p, p + ImVec2(w, h), col(on ? t.accent_muted : hov ? (t.dark ? t.border_muted : t.inset) : t.btn), h / 2);
+    bool on_x = on && hov && ImGui::GetIO().MousePos.x > p.x + w - 18 * k();
+    d->AddRectFilled(p, p + ImVec2(w, h), col(on ? t.accent_muted : hov ? hover : t.dark ? t.panel : t.bg), h / 2);
     d->AddRect(p, p + ImVec2(w, h), col(on ? t.accent : t.border), h / 2);
-    float x = p.x + 10 * k(), y = p.y + (h - ks.y) / 2;
-    d->AddText(ImVec2(x, y), col(on ? t.accent : t.muted), key.c_str());
-    d->AddText(ImVec2(x + ks.x + 4 * k(), y), col(on ? t.accent : t.fg), value.c_str());
-    ImVec2 ip(p.x + w - 20 * k(), p.y + (h - 10 * k()) / 2);
-    if (on) icon_cross(d, ip, 10 * k(), col(on_x ? t.fg : t.accent));
-    else icon_chevron(d, ip, 10 * k(), col(t.fg));
-    ImGui::PopFont();
+    float x = p.x + 8 * k(), y = p.y + (h - ks.y) / 2;
+    d->AddText(f.regular, cfs, ImVec2(x, y), col(on ? t.accent : t.muted), key.c_str());
+    d->AddText(f.medium, cfs, ImVec2(x + ks.x, y), col(on ? t.accent : t.fg), value.c_str());
+    ImVec2 ip(p.x + w - 16 * k(), p.y + (h - 8 * k()) / 2);
+    if (on) icon_cross(d, ip, 8 * k(), col(on_x ? t.fg : t.accent));
+    else icon_chevron(d, ip, 8 * k(), col(t.muted));
     ImGui::SameLine();
     return clicked ? (on_x ? 2 : 1) : 0;
   };
@@ -458,19 +472,15 @@ void Gui::filter_bar() {
   }
   // + Filter
   {
-    ImGui::PushFont(f.medium, 12 * k());
-    float w = ImGui::CalcTextSize("Filter").x + 30 * k(), h = 26 * k();
-    if (ImGui::GetCursorPosX() > x0 + 1 && w > xmax - ImGui::GetCursorPosX() - right_w)
-      ImGui::NewLine();
+    float w = f.regular->CalcTextSizeA(cfs, FLT_MAX, 0, "+ Filter").x + 12 * k(), h = 22 * k();
+    if (ImGui::GetCursorPosX() > x0 + 1 && w > xmax - ImGui::GetCursorPosX()) ImGui::NewLine();
     ImVec2 p = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##addfilter", ImVec2(w, h)) || open_add_filter) {
       ImGui::OpenPopup("##addmenu");
       open_add_filter = false;
     }
     if (ImGui::IsItemHovered()) d->AddRectFilled(p, p + ImVec2(w, h), col(t.accent_muted), h / 2);
-    icon_plus(d, ImVec2(p.x + 8 * k(), p.y + (h - 12 * k()) / 2), 12 * k(), col(t.accent));
-    d->AddText(ImVec2(p.x + 24 * k(), p.y + (h - ImGui::GetTextLineHeight()) / 2), col(t.accent), "Filter");
-    ImGui::PopFont();
+    d->AddText(f.regular, cfs, ImVec2(p.x + 6 * k(), p.y + (h - cfs) / 2), col(t.accent), "+ Filter");
     ImGui::SameLine();
     if (ImGui::BeginPopup("##addmenu")) {
       static std::string typed;
@@ -507,79 +517,26 @@ void Gui::filter_bar() {
       ImGui::EndPopup();
     }
   }
-  // Sort and Columns, right-aligned on this line
-  {
-    float x = xmax - right_w;
-    if (ImGui::GetCursorPosX() > x) ImGui::NewLine();
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
-    ImGui::PushFont(f.medium, 12 * k());
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    float sw = ImGui::CalcTextSize(("Sort " + sort_text).c_str()).x + 40 * k(), h = 26 * k();
-    if (ImGui::InvisibleButton("##sort", ImVec2(sw, h))) ImGui::OpenPopup("##sortmenu");
-    bool hov = ImGui::IsItemHovered();
-    d->AddRectFilled(p, p + ImVec2(sw, h), col(hov ? (t.dark ? t.border_muted : t.inset) : t.btn), 6 * k());
-    d->AddRect(p, p + ImVec2(sw, h), col(t.border), 6 * k());
-    float ty = p.y + (h - ImGui::GetTextLineHeight()) / 2;
-    d->AddText(ImVec2(p.x + 10 * k(), ty), col(t.muted), "Sort");
-    d->AddText(ImVec2(p.x + 10 * k() + ImGui::CalcTextSize("Sort ").x, ty), col(t.fg), sort_text.c_str());
-    icon_chevron(d, ImVec2(p.x + sw - 20 * k(), p.y + (h - 10 * k()) / 2), 10 * k(), col(t.fg));
-    ImGui::SameLine();
-    ImVec2 c = ImGui::GetCursorScreenPos();
-    float cw = ImGui::CalcTextSize("Columns").x + 38 * k();
-    if (ImGui::InvisibleButton("##columns", ImVec2(cw, h))) ImGui::OpenPopup("##colmenu");
-    hov = ImGui::IsItemHovered();
-    d->AddRectFilled(c, c + ImVec2(cw, h), col(hov ? (t.dark ? t.border_muted : t.inset) : t.btn), 6 * k());
-    d->AddRect(c, c + ImVec2(cw, h), col(t.border), 6 * k());
-    icon_columns(d, ImVec2(c.x + 10 * k(), c.y + (h - 12 * k()) / 2), 12 * k(), col(t.fg));
-    d->AddText(ImVec2(c.x + 28 * k(), ty), col(t.fg), "Columns");
-    ImGui::PopFont();
-    if (ImGui::BeginPopup("##sortmenu")) {
-      static const char* what[] = {"the plugin's order", "last updated first", "newest first", "biggest first", "by repo"};
-      for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo}) {
-        if (s == Sort::List && !list) continue;
-        if (ImGui::MenuItem(sort_label(s).c_str(), what[static_cast<int>(s)], view().sort_or_default() == s)) set_sort(s);
-      }
-      ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("##colmenu")) {
-      section("Columns (shared with the terminal UI)");
-      int shown = 0;
-      for (auto& cl : cfg.columns) shown += !cl.hidden;
-      for (size_t i = 0; i < cfg.columns.size(); ++i) {
-        Column& cl = cfg.columns[i];
-        if (!cl.command.empty()) {
-          ImGui::MenuItem(cl.name.c_str(), "command column: terminal UI only", false, false);
-          continue;
-        }
-        bool on = !cl.hidden;
-        std::string label = cl.name == "number" ? "#" : cl.name == "tags" ? "tags (as pills by the title)" : cl.name;
-        if (ImGui::MenuItem(label.c_str(), nullptr, on, !on || shown > 1)) {
-          cl.hidden = on;
-          save("saved");
-        }
-      }
-      ImGui::EndPopup();
-    }
-  }
   ImGui::NewLine();
   ImGui::PopStyleVar(2);
   // a view whose filters changed: Save, Save as new view, Revert
   if (modified(active)) {
     ImGui::Dummy(ImVec2(1, 2 * k()));
     ImVec2 p = ImGui::GetCursorScreenPos();
-    d->AddCircleFilled(ImVec2(p.x + 4 * k(), p.y + 13 * k()), 3.5f * k(), col(t.attention));
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 14 * k(), p.y + (26 * k() - ImGui::GetTextLineHeight()) / 2));
-    text(view().name + (tabs[active].saved ? " changed" : " isn't saved yet"), t.muted, nullptr, 12);
-    ImGui::SameLine(0, 12 * k());
+    d->AddCircleFilled(ImVec2(p.x + 3 * k(), p.y + 10 * k()), 3 * k(), col(t.attention));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 12 * k(), p.y + (20 * k() - 11 * k()) / 2));
+    text(view().name + (tabs[active].saved ? " changed" : " isn't saved yet"), t.muted, nullptr, 11);
+    ImGui::SameLine(0, 10 * k());
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, p.y));
-    if (button("Save", Btn::Default, 26, "S")) act("S");
-    ImGui::SameLine();
-    if (button("Save as new view", Btn::Ghost, 26)) ask_name(Ask::SaveAs, active);
+    if (button("Save", Btn::Default, 20, "S")) act("S");
+    ImGui::SameLine(0, 4 * k());
+    if (button("Save as new view", Btn::Ghost, 20)) ask_name(Ask::SaveAs, active);
     if (tabs[active].saved) {
-      ImGui::SameLine();
-      if (button("Revert", Btn::Ghost, 26)) revert_view(active);
+      ImGui::SameLine(0, 4 * k());
+      if (button("Revert", Btn::Ghost, 20)) revert_view(active);
     }
   }
+  ImGui::Dummy(ImVec2(1, 4 * k()));
 }
 
 // -- the table ---------------------------------------------------------------------------
@@ -629,68 +586,65 @@ void Gui::pr_table() {
     return;
   }
 
-  // the columns config.json shows, in its order; tags go by the title
+  // gui.columns, in their order, then the title; labels and tags go after it
   std::vector<std::string> cols;
-  bool tags = false;
-  for (auto& c : cfg.columns) {
-    if (c.hidden || !c.command.empty()) continue;
-    if (c.name == "tags") tags = true;
-    else cols.push_back(c.name);
-  }
-  if (cols.empty()) cols.push_back("title");
+  for (auto& c : cfg.gui.columns)
+    if (c.shown && c.name != "labels" && c.name != "tags") cols.push_back(c.name);
+  cols.push_back("title");
   std::set<std::string> owners_here;
   for (auto& p : cur_rows) owners_here.insert(p.owner);
   bool show_owner = owners_here.size() > 1;
   float rh = row_height(cfg.gui.density) * k();
-  ImGuiTableFlags fl = ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_SizingFixedFit |
-                       ImGuiTableFlags_NoSavedSettings;
+  ImGuiTableFlags fl = ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_NoPadOuterX |
+                       ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings;
   ImGui::PushStyleColor(ImGuiCol_TableBorderLight, col(t.border_muted));
+  ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4 * k(), 0));  // 8px between columns
   if (!ImGui::BeginTable("##prs", static_cast<int>(cols.size()), fl)) {
+    ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     return;
   }
-  for (auto& c : cols) {
-    // the canvas's widths, less the cells' padding
-    float w = (c == "repo" ? (show_owner ? 120 : 72) : c == "number" ? 56 : c == "size" ? 132 : c == "state" ? 140
-               : c == "age" ? 56 : c == "author" ? 104 : 0) - 8;
-    if (c == "title") {
-      ImGui::TableSetupColumn(c.c_str(), ImGuiTableColumnFlags_WidthStretch);
-    } else {
-      ImGui::TableSetupColumn(c.c_str(), ImGuiTableColumnFlags_WidthFixed, w * k());
-    }
+  for (size_t i = 0; i < cols.size(); ++i) {
+    const std::string& c = cols[i];
+    // the canvas's widths; the first column carries the row's 10px padding
+    float w = c == "number" ? 40 : c == "repo" ? (show_owner ? 96 : 40) : c == "size" ? 78 : c == "blocks" ? 42
+              : c == "state" ? 128 : c == "age" ? 34 : c == "author" ? 92 : 0;
+    if (c == "title") ImGui::TableSetupColumn(c.c_str(), ImGuiTableColumnFlags_WidthStretch);
+    else ImGui::TableSetupColumn(c.c_str(), ImGuiTableColumnFlags_WidthFixed, (w + (i == 0 ? 6 : 0)) * k());
   }
   ImGui::TableSetupScrollFreeze(0, 1);
   // the header row: Repo, Size and Age sort on a click; the sort shows ↓
   Sort sort = v.sort_or_default();
-  ImGui::TableNextRow(ImGuiTableRowFlags_Headers, 32 * k());
-  ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, col(t.panel));
+  float hh = 24 * k(), hfs = 11 * k();
+  ImGui::TableNextRow(ImGuiTableRowFlags_Headers, hh);
+  ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, col(t.bg));
+  ImDrawList* d = ImGui::GetWindowDrawList();
   for (size_t i = 0; i < cols.size(); ++i) {
     ImGui::TableSetColumnIndex(static_cast<int>(i));
     const std::string& c = cols[i];
     std::optional<Sort> key = c == "repo" ? std::optional(Sort::Repo) : c == "size" ? std::optional(Sort::Size)
                               : c == "age" ? std::optional(Sort::Created) : std::nullopt;
-    std::string label = c == "number" ? "#" : std::string(1, static_cast<char>(std::toupper(c[0]))) + c.substr(1);
+    std::string label = c == "number" ? "#" : c == "blocks" ? "" : std::string(1, static_cast<char>(std::toupper(c[0]))) + c.substr(1);
     bool on = key && *key == sort;
-    if (on) label += " ↓";
+    if (on) label = "↓ " + label;
+    if (i == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6 * k());
     float y = ImGui::GetCursorPosY();
-    if (i == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 16 * k());
-    ImGui::PushFont(f.semibold, 12 * k());
-    ImGui::SetCursorPosY(y + (32 * k() - ImGui::GetTextLineHeight()) / 2);
+    ImVec2 ts = f.semibold->CalcTextSizeA(hfs, FLT_MAX, 0, label.c_str());
+    if (c == "age") ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ts.x);
+    ImGui::SetCursorPosY(y + (hh - ts.y) / 2);
     ImVec2 p = ImGui::GetCursorScreenPos();
-    ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    bool hov = false;
     if (key) {
       ImGui::PushID(static_cast<int>(i));
-      if (ImGui::InvisibleButton("##h", ImVec2(std::max(ts.x, 20.f), ts.y))) set_sort(*key);
-      bool hov = ImGui::IsItemHovered();
+      if (ImGui::InvisibleButton("##h", ImVec2(std::max(ts.x, 12 * k()), ts.y))) set_sort(*key);
+      hov = ImGui::IsItemHovered();
       if (hov) ImGui::SetTooltip("Sort by %s", sort_label(*key).c_str());
-      ImGui::GetWindowDrawList()->AddText(p, col(on || hov ? t.fg : t.muted), label.c_str());
       ImGui::PopID();
     } else {
-      text(label, t.muted);
+      ImGui::Dummy(ts);
     }
-    ImGui::PopFont();
+    d->AddText(f.semibold, hfs, p, col(on || hov ? t.fg : t.muted), label.c_str());
   }
-  ImDrawList* d = ImGui::GetWindowDrawList();
   for (size_t ri = 0; ri < cur_rows.size(); ++ri) {
     const Pr& p = cur_rows[ri];
     ImGui::TableNextRow(0, rh);
@@ -729,89 +683,101 @@ void Gui::pr_table() {
       }
     }
     ImGui::PopID();
-    float lh = ImGui::GetTextLineHeight();
-    auto cell_y = [&](float h) { ImGui::SetCursorPosY(y0 + (rh - h) / 2); };
-    for (size_t ci = 0; ci < cols.size(); ++ci) {
-      ImGui::TableSetColumnIndex(static_cast<int>(ci));
-      const std::string& c = cols[ci];
-      if (ci == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 16 * k());
-      if (c == "repo") {
-        cell_y(lh);
-        text(show_owner ? p.repo : short_repo(p.repo), t.muted);
-      } else if (c == "number") {
-        ImGui::PushFont(f.mono, 12 * k());
-        cell_y(ImGui::GetTextLineHeight());
-        text(std::to_string(p.number), t.muted);
-        ImGui::PopFont();
-      } else if (c == "size") {
-        if (p.partial) continue;
-        ImGui::PushFont(f.mono, 12 * k());
-        cell_y(ImGui::GetTextLineHeight());
-        float x = ImGui::GetCursorPosX();
-        text("+" + compact(p.additions), t.success);
-        ImGui::SameLine(0, 0);
-        ImGui::SetCursorPosX(x + 44 * k());
-        text("−" + compact(p.deletions), t.danger);
-        ImGui::SameLine(0, 0);
-        ImGui::SetCursorPosX(x + 88 * k());
-        diffstat_blocks(p.additions, p.deletions);
-        ImGui::PopFont();
-      } else if (c == "state") {
-        cell_y(22 * k());
-        Pill pl = state_pill(derive_state(p, status_of(p.url)));
-        pill(strip_emoji(pl.text), pl.tone);
-      } else if (c == "age") {
-        cell_y(lh);
-        if (p.created) text(age(now() - p.created), t.muted);
-      } else if (c == "author") {
-        if (p.author.empty()) continue;
-        cell_y(20 * k());
-        avatar(p.author);
-        ImGui::SameLine(0, 6 * k());
-        cell_y(lh);
-        text(who(p.author), t.fg);
-      } else if (c == "title") {
-        cell_y(lh);
-        float avail = ImGui::GetContentRegionAvail().x - 16 * k();
-        // the labels' and tags' pills after the title, which gets what's left
-        std::vector<std::pair<std::string, const Person*>> pills;
-        for (auto& l : p.labels) pills.push_back({l, nullptr});
-        if (tags)
-          for (auto& tg : tags_of(p.url))
-            if (std::string s = strip_emoji(tg.glyph + " " + tg.text); !s.empty()) pills.push_back({s, tag_person(tg)});
-        ImGui::PushFont(nullptr, 11 * k());
-        float pills_w = 0;
-        for (auto& [s, who_] : pills) pills_w += ImGui::CalcTextSize(s.c_str()).x + 16 * k() + 6 * k() + (who_ ? 10 * k() : 0);
-        ImGui::PopFont();
-        std::string title = p.partial ? p.url : shown_title(p.title);
-        ImGui::PushFont(f.medium, 0.f);
-        float tw = std::min(ImGui::CalcTextSize(title.c_str()).x, std::max(avail * 0.6f, avail - pills_w));
-        ImVec2 tp = ImGui::GetCursorScreenPos();
-        ImGui::RenderTextEllipsis(d, tp, ImVec2(tp.x + tw, tp.y + lh), tp.x + tw, title.c_str(), nullptr, nullptr);
-        ImGui::PopFont();
-        float x = tp.x + tw + 6 * k();
-        ImGui::PushFont(nullptr, 11 * k());
-        float clip = tp.x + avail;
-        for (auto& [s, pp] : pills) {
-          ImVec2 ss = ImGui::CalcTextSize(s.c_str());
-          float w = ss.x + 14 * k() + (pp ? 10 * k() : 0), h = 18 * k();
-          if (x + w > clip) break;
-          float y = tp.y + (lh - h) / 2;
-          d->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), col(t.border), h / 2);
-          float tx = x + 7 * k();
-          if (pp && pp->rgb >= 0) {
-            d->AddCircleFilled(ImVec2(tx + 3 * k(), y + h / 2), 3 * k(), IM_COL32(pp->rgb >> 16, (pp->rgb >> 8) & 0xff, pp->rgb & 0xff, 255));
-            tx += 10 * k();
-          }
-          d->AddText(ImVec2(tx, y + (h - ss.y) / 2), col(t.muted), s.c_str());
-          x += w + 6 * k();
-        }
-        ImGui::PopFont();
-      }
-    }
+    pr_cells(p, cols, y0, rh, show_owner);
   }
   ImGui::EndTable();
+  ImGui::PopStyleVar();
   ImGui::PopStyleColor();
+}
+
+// One row's cells, in the table row ImGui is on (the list, and Settings'
+// preview row): cols in order, the title last with its labels and tags.
+void Gui::pr_cells(const Pr& p, const std::vector<std::string>& cols, float y0, float rh, bool show_owner) {
+  ImDrawList* d = ImGui::GetWindowDrawList();
+  float fs = ImGui::GetFontSize(), mfs = code() * k();
+  auto cell_y = [&](float h) { ImGui::SetCursorPosY(y0 + (rh - h) / 2); };
+  for (size_t ci = 0; ci < cols.size(); ++ci) {
+    ImGui::TableSetColumnIndex(static_cast<int>(ci));
+    const std::string& c = cols[ci];
+    if (ci == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6 * k());
+    if (c == "repo") {
+      cell_y(fs);
+      text(show_owner ? p.repo : short_repo(p.repo), t.fg2);
+    } else if (c == "number") {
+      cell_y(mfs);
+      text(std::to_string(p.number), t.muted, f.mono, code());
+    } else if (c == "size") {
+      if (p.partial) continue;
+      cell_y(mfs);
+      segments({{"+" + compact(p.additions), t.success}, {" ", t.fg}, {"−" + compact(p.deletions), t.danger}}, f.mono, code());
+    } else if (c == "blocks") {
+      if (p.partial) continue;
+      cell_y(rh);
+      diffstat_blocks(p.additions, p.deletions, rh / k());
+    } else if (c == "state") {
+      cell_y(18 * k());
+      state_text(state_pill(derive_state(p, status_of(p.url))), t.fg2, 18);
+    } else if (c == "age") {
+      if (!p.created) continue;
+      std::string a = age(now() - p.created);
+      ImVec2 as = f.regular->CalcTextSizeA(11 * k(), FLT_MAX, 0, a.c_str());
+      cell_y(as.y);
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - as.x);
+      text(a, t.muted, nullptr, 11);
+    } else if (c == "author") {
+      if (p.author.empty()) continue;
+      cell_y(14 * k());
+      avatar(p.author);
+      ImGui::SameLine(0, 6 * k());
+      cell_y(fs);
+      ImVec2 at = ImGui::GetCursorScreenPos();
+      float right = at.x + ImGui::GetContentRegionAvail().x;
+      std::string name = who(p.author);
+      ImGui::PushStyleColor(ImGuiCol_Text, col(t.fg2));
+      ImGui::RenderTextEllipsis(d, at, ImVec2(right, at.y + fs), right, name.c_str(), nullptr, nullptr);
+      ImGui::PopStyleColor();
+      ImGui::Dummy(ImVec2(right - at.x, fs));
+    } else if (c == "title") {
+      cell_y(fs);
+      float avail = ImGui::GetContentRegionAvail().x - 10 * k();
+      // labels as chips, then the plugins' tags, after the title, which gets what's left
+      struct Bit {
+        std::string s;
+        const Person* who;
+        bool tag;
+      };
+      std::vector<Bit> bits;
+      if (cfg.gui.shows("labels"))
+        for (auto& l : p.labels) bits.push_back({l, nullptr, false});
+      if (cfg.gui.shows("tags"))
+        for (auto& tg : tags_of(p.url))
+          if (std::string s = strip_emoji(tg.glyph + " " + tg.text); !s.empty()) bits.push_back({s, tag_person(tg), true});
+      float lfs = 10 * k(), bits_w = 0;
+      for (auto& b : bits)
+        bits_w += (b.tag ? f.mono : f.regular)->CalcTextSizeA(lfs, FLT_MAX, 0, b.s.c_str()).x + (b.tag ? 0 : 12 * k()) +
+                  (b.who ? 9 * k() : 0) + 6 * k();
+      std::string title = p.partial ? p.url : shown_title(p.title);
+      float tw = std::min(f.regular->CalcTextSizeA(fs, FLT_MAX, 0, title.c_str()).x, std::max(avail * 0.6f, avail - bits_w));
+      ImVec2 tp = ImGui::GetCursorScreenPos();
+      ImGui::RenderTextEllipsis(d, tp, ImVec2(tp.x + tw, tp.y + fs), tp.x + tw, title.c_str(), nullptr, nullptr);
+      float x = tp.x + tw + 6 * k(), clip = tp.x + avail;
+      for (auto& b : bits) {
+        ImFont* bf = b.tag ? f.mono : f.regular;
+        ImVec2 ss = bf->CalcTextSizeA(lfs, FLT_MAX, 0, b.s.c_str());
+        float w = ss.x + (b.tag ? 0 : 12 * k()) + (b.who ? 9 * k() : 0), h = 16 * k();
+        if (x + w > clip) break;
+        float y = tp.y + (fs - h) / 2, tx = x + (b.tag ? 0 : 6 * k());
+        if (!b.tag) d->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), col(t.border), h / 2);
+        if (b.who && b.who->rgb >= 0) {
+          d->AddCircleFilled(ImVec2(tx + 3 * k(), y + h / 2), 3 * k(), IM_COL32(b.who->rgb >> 16, (b.who->rgb >> 8) & 0xff, b.who->rgb & 0xff, 255));
+          tx += 9 * k();
+        }
+        d->AddText(bf, lfs, ImVec2(tx, y + (h - ss.y) / 2), col(t.muted), b.s.c_str());
+        x += w + 6 * k();
+      }
+      ImGui::Dummy(ImVec2(avail, fs));
+    }
+  }
 }
 
 void Gui::prs_pane() {
@@ -825,29 +791,26 @@ void Gui::prs_pane() {
                                                        ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
-  ImGui::SetCursorPos(ImGui::GetCursorStartPos() + ImVec2(16 * k(), 12 * k()));
-  ImGui::BeginGroup();
-  ImGui::PushItemWidth(-1);
-  ImGui::BeginChild("##filterarea", ImVec2(ImGui::GetContentRegionAvail().x - 16 * k(), 0),
-                    ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
+  // the filter bar, padded 8px 10px; a line under it
+  ImGui::SetCursorPos(ImGui::GetCursorStartPos() + ImVec2(10 * k(), 8 * k()));
+  ImGui::BeginChild("##filterarea", ImVec2(ImGui::GetContentRegionAvail().x - 10 * k(), 0), ImGuiChildFlags_AutoResizeY,
+                    ImGuiWindowFlags_NoScrollbar);
   filter_bar();
   ImGui::EndChild();
-  ImGui::PopItemWidth();
-  ImGui::EndGroup();
   ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::GetWindowDrawList()->AddLine(ImVec2(ImGui::GetWindowPos().x, p.y + 4 * k()),
-                                      ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + 4 * k()),
-                                      col(t.border_muted));
-  ImGui::SetCursorPos(ImVec2(0, ImGui::GetCursorPosY() + 5 * k()));
+  float wx = ImGui::GetWindowPos().x;
+  ImGui::GetWindowDrawList()->AddLine(ImVec2(wx, p.y + 2 * k()), ImVec2(wx + ImGui::GetWindowWidth(), p.y + 2 * k()), col(t.border));
+  ImGui::SetCursorPos(ImVec2(0, ImGui::GetCursorPosY() + 3 * k()));
   pr_table();
   ImGui::End();
 }
 
 // -- the preview ---------------------------------------------------------------------------
 
-// What each plugin says about a PR: its state, tags, the start of its note,
-// and its actions as buttons (temoc's "Run specs").
-void Gui::plugins_box(const Pr& p, bool compact) {
+// What each plugin says about a PR, a row each: a dot, its name, one line
+// of what it says (its run, its status, its tags and the start of its
+// note; all of it on hover) and its actions as 20px buttons.
+void Gui::plugins_box(const Pr& p) {
   ImDrawList* d = ImGui::GetWindowDrawList();
   bool any = false;
   for (size_t i = 0; i < cfg.plugins.size(); ++i) {
@@ -858,135 +821,117 @@ void Gui::plugins_box(const Pr& p, bool compact) {
     std::string problem = plugin_problem(i);
     if (it == live[i].prs.end() && acts.empty() && problem.empty()) continue;
     ImGui::PushID(static_cast<int>(i));
-    if (any) {
-      ImVec2 q = ImGui::GetCursorScreenPos();
-      d->AddLine(ImVec2(q.x - 12 * k(), q.y), ImVec2(q.x + ImGui::GetContentRegionAvail().x + 12 * k(), q.y), col(t.border_muted));
-    }
-    any = true;
-    ImGui::Dummy(ImVec2(1, 10 * k()));
     const PrInfo* info = it == live[i].prs.end() ? nullptr : &it->second;
-    std::string headline;
-    uint32_t hcol = t.muted, dot = t.success;
+    std::string line, full;
+    uint32_t lc = t.muted, dot = t.success;
     if (!problem.empty()) {
-      headline = live[i].health == "exited" ? "not running" : "error";
-      hcol = t.danger;
-      dot = t.danger;
+      line = (live[i].health == "exited" ? "not running · " : "error · ") + first_line(problem);
+      full = problem;
+      lc = dot = t.danger;
     } else if (info && info->marks_summary) {
-      headline = info->marks_summary->banner ? "run failed" : first_line(info->marks_summary->text);
-      Result r = result_of(*info->marks_summary);
-      hcol = r == Result::Passed ? t.success : r == Result::Failed || r == Result::Error ? t.danger
-             : r == Result::Running ? t.accent : r == Result::Snoozed ? t.attention : t.muted;
-      dot = hcol == t.muted ? t.neutral : hcol;
-    } else if (info && info->status) {
-      headline = strip_emoji(info->status->glyph + " " + info->status->text);
-      hcol = t.accent;
-    } else if (!info) {
-      headline = "nothing on this PR";
+      const Mark& m = *info->marks_summary;
+      std::string why = first_line(m.text);
+      if (auto c = why.find(": "); m.banner && c != std::string::npos && why.substr(0, c).find(' ') != std::string::npos)
+        why = why.substr(c + 2);
+      line = m.banner ? "run failed · " + why : unclocked(why) == why ? why : first_line(m.text);
+      full = m.text;
+      Result r = m.banner ? Result::Failed : result_of(m);
+      lc = r == Result::Passed ? t.success : r == Result::Failed || r == Result::Error ? t.danger
+           : r == Result::Running ? t.accent : r == Result::Snoozed ? t.attention : t.muted;
+      dot = lc == t.muted ? t.neutral : lc;
+    } else if (info) {
+      std::vector<std::string> bits;
+      if (info->status) bits.push_back(strip_emoji(info->status->glyph + " " + info->status->text));
+      for (auto& tg : info->tags)
+        if (std::string s = strip_emoji(tg.glyph + " " + tg.text); !s.empty()) bits.push_back(s);
+      if (!info->note.empty())
+        for (auto& b : md::blocks(info->note))
+          if (b.kind == md::Block::Para) {
+            std::string note;
+            for (auto& sp : b.spans) note += sp.text == "\n" ? " " : sp.text;
+            bits.push_back(note);
+            break;
+          }
+      for (auto& bit : bits) line += (line.empty() ? "" : " · ") + bit;
+      full = line;
+      if (info->status) lc = t.accent;
+      if (bits.empty()) line = "nothing on this PR";
+    } else {
+      line = "nothing on this PR";
       dot = live[i].health == "ok" ? t.neutral : t.attention;
     }
     ImVec2 q = ImGui::GetCursorScreenPos();
-    d->AddCircleFilled(ImVec2(q.x + 4 * k(), q.y + ImGui::GetTextLineHeight() / 2), 4 * k(), col(dot));
-    float bx = ImGui::GetContentRegionAvail().x;
-    // the actions, right-aligned on the first line
-    std::vector<std::pair<std::string, Action>> btns;
-    for (auto& a : acts) btns.push_back({strip_emoji(a.button.empty() ? a.label : a.button), a});
+    float W = ImGui::GetContentRegionAvail().x, rh = 28 * k(), fs = ImGui::GetFontSize(), mfs = 11 * k();
+    if (any) d->AddLine(q, ImVec2(q.x + W, q.y), col(t.border_muted));
+    any = true;
+    // the buttons, right-aligned
     float bw = 0;
-    ImGui::PushFont(nullptr, 12 * k());
-    for (auto& [label, a] : btns) bw += button_width(label, Btn::Default, a.key) + 6 * k();
+    for (auto& a : acts) bw += button_width(strip_emoji(a.button.empty() ? a.label : a.button), Btn::Default, a.key, nullptr, 20) + 4 * k();
+    float x = q.x + W - bw + 4 * k();
+    for (auto& a : acts) {
+      ImGui::SetCursorScreenPos(ImVec2(x, q.y + (rh - 20 * k()) / 2));
+      if (button(strip_emoji(a.button.empty() ? a.label : a.button) + "##" + a.id, Btn::Default, 20, a.key)) plugin_action(a.key, p.url);
+      x = ImGui::GetItemRectMax().x + 4 * k();
+    }
+    d->AddCircleFilled(ImVec2(q.x + 3 * k(), q.y + rh / 2), 3 * k(), col(dot));
+    const std::string& name = cfg.plugins[i].name;
+    d->AddText(f.semibold, fs, ImVec2(q.x + 14 * k(), q.y + (rh - fs) / 2), col(t.fg), name.c_str());
+    float lx = q.x + 14 * k() + std::max(44 * k(), f.semibold->CalcTextSizeA(fs, FLT_MAX, 0, name.c_str()).x + 8 * k());
+    float lr = q.x + W - bw - 8 * k();
+    ImGui::PushFont(f.regular, mfs);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(lc));
+    ImGui::RenderTextEllipsis(d, ImVec2(lx, q.y + (rh - mfs) / 2), ImVec2(lr, q.y + rh), lr, strip_emoji(line).c_str(), nullptr, nullptr);
+    ImGui::PopStyleColor();
     ImGui::PopFont();
-    ImGui::SetCursorScreenPos(ImVec2(q.x + 18 * k(), q.y));
-    ImGui::BeginGroup();
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bx - 18 * k() - (compact ? 0 : bw) - 4 * k());
-    segments({{cfg.plugins[i].name, t.fg}, {headline.empty() ? "" : "  ", t.fg}}, f.semibold);
-    if (!headline.empty()) {
-      ImGui::SameLine(0, 0);
-      text(headline, hcol, nullptr, 12);
+    ImGui::SetCursorScreenPos(ImVec2(lx, q.y));
+    ImGui::InvisibleButton("##line", ImVec2(std::max(1.f, lr - lx), rh));
+    if (ImGui::IsItemHovered() && !full.empty()) {
+      ImGui::SetNextWindowSize(ImVec2(360 * k(), 0));
+      ImGui::BeginTooltip();
+      text_wrapped(strip_emoji(full), t.fg, nullptr, 11);
+      ImGui::EndTooltip();
     }
-    if (!problem.empty()) text_wrapped(problem, t.danger, f.mono, 12);
-    if (info && info->marks_summary && info->marks_summary->banner) {
-      std::string why = first_line(info->marks_summary->text);
-      if (auto c = why.find(": "); c != std::string::npos && why.substr(0, c).find(' ') != std::string::npos) why = why.substr(c + 2);
-      text_wrapped(why, t.danger, f.mono, 12);
-    }
-    if (info) {
-      // a summary says what the tags would (anton-temoc's 🧪 2 ✗)
-      for (auto& tg : info->marks_summary ? std::vector<Tag>{} : info->tags) {
-        std::string s = strip_emoji(tg.glyph + " " + tg.text);
-        if (s.empty()) continue;
-        ImGui::PushStyleColor(ImGuiCol_Text, col(t.muted));
-        ImGui::TextWrapped("%s%s", s.c_str(), tg.hint.empty() ? "" : (" · " + strip_emoji(tg.hint)).c_str());
-        ImGui::PopStyleColor();
-      }
-      if (!info->note.empty()) {
-        std::string note;
-        for (auto& b : md::blocks(info->note))
-          if (b.kind == md::Block::Para) {
-            for (auto& sp : b.spans) note += sp.text == "\n" ? " " : sp.text;
-            break;
-          }
-        if (note.size() > 220) note = note.substr(0, 217) + "…";
-        if (!note.empty()) text_wrapped(note, t.muted);
-      }
-    }
-    ImGui::PopTextWrapPos();
-    ImGui::EndGroup();
-    float end_y = ImGui::GetCursorScreenPos().y;
-    if (!btns.empty()) {
-      float x = compact ? q.x + 18 * k() : q.x + bx - bw + 6 * k();
-      float y = compact ? end_y + 2 * k() : q.y - 3 * k();
-      for (auto& [label, a] : btns) {
-        ImGui::SetCursorScreenPos(ImVec2(x, y));
-        ImGui::PushFont(nullptr, 12 * k());
-        if (button(label + "##" + a.id, Btn::Default, 26, a.key)) plugin_action(a.key, p.url);
-        ImGui::PopFont();
-        x = ImGui::GetItemRectMax().x + 6 * k();
-      }
-      if (compact) end_y = ImGui::GetItemRectMax().y + 2 * k();
-      end_y = std::max(end_y, ImGui::GetItemRectMax().y);
-    }
-    ImGui::SetCursorScreenPos(ImVec2(q.x, end_y));
-    ImGui::Dummy(ImVec2(1, 8 * k()));
+    ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + rh));
+    ImGui::Dummy(ImVec2(W, 0));
     ImGui::PopID();
   }
   if (!any) {
-    ImGui::Dummy(ImVec2(1, 8 * k()));
-    text(cfg.plugins.empty() ? "No plugins configured." : "No plugin says anything about this PR.", t.muted);
-    ImGui::Dummy(ImVec2(1, 8 * k()));
+    ImGui::Dummy(ImVec2(1, 4 * k()));
+    text(cfg.plugins.empty() ? "No plugins configured." : "No plugin says anything about this PR.", t.muted, nullptr, 11);
   }
 }
 
-// A box with a header strip, as the canvas's Reviewers and From plugins.
-static void box(Gui& g, const char* title, const std::function<void()>& body) {
-  ImGui::PushID(title);
+// A PR's meta line, as Preview and the reader draw it (11px): its state,
+// the author and age, then what's given in mono.
+void Gui::meta_line(const Pr& p, const std::vector<std::pair<std::string, uint32_t>>& mono) {
+  float h = 16 * k(), fs = 11 * k();
   ImDrawList* d = ImGui::GetWindowDrawList();
-  float w = ImGui::GetContentRegionAvail().x;
-  ImVec2 p = ImGui::GetCursorScreenPos();
-  float hh = 36 * g.k();
-  d->ChannelsSplit(2);
-  d->ChannelsSetCurrent(1);
-  ImGui::SetCursorScreenPos(ImVec2(p.x + 12 * g.k(), p.y + (hh - ImGui::GetTextLineHeight()) / 2));
-  g.text(title, g.t.fg, g.f.semibold);
-  ImGui::SetCursorScreenPos(ImVec2(p.x + 12 * g.k(), p.y + hh));
-  ImGui::BeginGroup();
-  ImGui::PushItemWidth(w - 24 * g.k());
-  ImGui::BeginChild("##boxbody", ImVec2(w - 24 * g.k(), 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
-  body();
-  ImGui::EndChild();
-  ImGui::PopItemWidth();
-  ImGui::EndGroup();
-  float bottom = ImGui::GetItemRectMax().y;
-  d->ChannelsSetCurrent(0);
-  d->AddRectFilled(p, ImVec2(p.x + w, p.y + hh), g.col(g.t.panel), 6 * g.k(), ImDrawFlags_RoundCornersTop);
-  d->AddLine(ImVec2(p.x, p.y + hh), ImVec2(p.x + w, p.y + hh), g.col(g.t.border));
-  d->AddRect(p, ImVec2(p.x + w, bottom), g.col(g.t.border), 6 * g.k());
-  d->ChannelsMerge();
-  ImGui::SetCursorScreenPos(ImVec2(p.x, bottom));
-  ImGui::Dummy(ImVec2(w, 0));
-  ImGui::PopID();
+  ImVec2 o = ImGui::GetCursorScreenPos();
+  float y = o.y + (h - fs) / 2, x = o.x;
+  auto put = [&](ImFont* fnt, const std::string& s, uint32_t c) {
+    d->AddText(fnt, fs, ImVec2(x, y), col(c), s.c_str());
+    x += fnt->CalcTextSizeA(fs, FLT_MAX, 0, s.c_str()).x;
+  };
+  Pill pl = state_pill(derive_state(p, status_of(p.url)));
+  d->AddCircleFilled(ImVec2(x + 3 * k(), o.y + h / 2), 3 * k(), col(tone_fg(pl.tone)));
+  x += 11 * k();
+  put(f.regular, strip_emoji(pl.text), tone_fg(pl.tone));
+  x += 8 * k();
+  if (!p.author.empty()) {
+    ImGui::SetCursorScreenPos(ImVec2(x, o.y + 1 * k()));
+    avatar(p.author);
+    x += 19 * k();
+    put(f.medium, who(p.author), t.fg2);
+    put(f.regular, " · " + age(now() - p.created) + " ago", t.muted);
+    x += 8 * k();
+  }
+  for (auto& [s, c] : mono) put(f.mono, s, c);
+  ImGui::SetCursorScreenPos(o);
+  ImGui::Dummy(ImVec2(x - o.x, h));
 }
 
 void Gui::preview_pane() {
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * k(), 16 * k()));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * k(), 12 * k()));
   bool shown = ImGui::Begin("Preview###preview", nullptr, ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
@@ -996,66 +941,45 @@ void Gui::preview_pane() {
     return ImGui::End();
   }
   const Pr& p = *cur;
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 6 * k()));
-  text(p.repo + "#" + std::to_string(p.number), t.muted, f.mono, 12);
-  text_wrapped(p.partial ? p.url : shown_title(p.title), t.fg, f.semibold, 18);
-  if (!p.partial) {
-    Pill pl = state_pill(derive_state(p, status_of(p.url)));
-    pill(strip_emoji(pl.text), pl.tone, 24);
-    ImGui::SameLine(0, 8 * k());
-    float y = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(y + 2 * k());
-    avatar(p.author);
-    ImGui::SameLine(0, 6 * k());
-    ImGui::SetCursorPosY(y + (24 * k() - ImGui::GetTextLineHeight()) / 2);
-    text(who(p.author), t.fg, f.semibold);
-    ImGui::SameLine(0, 8 * k());
-    ImGui::SetCursorPosY(y + (24 * k() - ImGui::GetTextLineHeight()) / 2);
-    text("opened " + age(now() - p.created) + " ago", t.muted);
-    ImGui::PushFont(f.mono, 12 * k());
-    text("+" + std::to_string(p.additions), t.success);
-    ImGui::SameLine();
-    text("−" + std::to_string(p.deletions), t.danger);
-    ImGui::SameLine();
-    diffstat_blocks(p.additions, p.deletions);
-    ImGui::PopFont();
-    ImGui::SameLine();
-    text("in " + std::to_string(p.changed_files) + (p.changed_files == 1 ? " file" : " files"), t.muted);
-  }
-  ImGui::Dummy(ImVec2(1, 10 * k()));
-  if (button("Open in reader", Btn::Primary, 32, "Enter")) open_reader(p);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * k(), 4 * k()));
+  text(p.repo + "#" + std::to_string(p.number), t.muted, f.mono, code());
+  text_wrapped(p.partial ? p.url : shown_title(p.title), t.fg, f.semibold, 14);
+  if (!p.partial)
+    meta_line(p, {{"+" + std::to_string(p.additions), t.success}, {" ", t.muted}, {"−" + std::to_string(p.deletions), t.danger},
+                  {" · " + std::to_string(p.changed_files) + (p.changed_files == 1 ? " file" : " files"), t.muted}});
+  ImGui::Dummy(ImVec2(1, 8 * k()));
+  if (button("Open in reader", Btn::Primary, 24, "↵")) open_reader(p);
   ImGui::SameLine();
-  {
-    if (button("GitHub", Btn::Default, 32, "", 0, icon_external)) open(p.url);
-  }
+  if (button("GitHub", Btn::Default, 24, "", 0, icon_external)) open(p.url);
   ImGui::SameLine();
-  if (icon_button("##copy", icon_copy, 32, true, "Copy URL")) {
+  if (icon_button("##copy", icon_copy, 24, true, "Copy URL")) {
     ImGui::SetClipboardText(p.url.c_str());
     flash("copied " + p.url);
   }
-  ImGui::Dummy(ImVec2(1, 10 * k()));
-  box(*this, "Reviewers", [&] {
+  ImGui::Dummy(ImVec2(1, 8 * k()));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * k(), 0));
+  section("Reviewers");
+  {
     std::set<std::string> named;
     bool any = false;
+    float rh = 24 * k(), fs = ImGui::GetFontSize();
     auto row = [&](const std::string& login, const std::string& status, uint32_t c) {
-      ImGui::Dummy(ImVec2(1, 6 * k()));
-      float y = ImGui::GetCursorPosY();
+      ImVec2 q = ImGui::GetCursorScreenPos();
+      float W = ImGui::GetContentRegionAvail().x;
+      ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + (rh - 14 * k()) / 2));
       avatar(login);
-      ImGui::SameLine(0, 8 * k());
-      ImGui::SetCursorPosY(y + (20 * k() - ImGui::GetTextLineHeight()) / 2);
-      text(login == viewer ? who(login) + " (you)" : who(login), t.fg, f.medium);
-      ImGui::PushFont(nullptr, 12 * k());
-      float sw = ImGui::CalcTextSize(status.c_str()).x;
-      ImGui::SameLine(ImGui::GetWindowWidth() - sw);
-      ImGui::SetCursorPosY(y + (20 * k() - ImGui::GetTextLineHeight()) / 2);
-      text(status, c);
-      ImGui::PopFont();
-      ImGui::Dummy(ImVec2(1, 2 * k()));
+      ImDrawList* d = ImGui::GetWindowDrawList();
+      std::string name = login == viewer ? who(login) + " (you)" : who(login);
+      d->AddText(f.regular, fs, ImVec2(q.x + 20 * k(), q.y + (rh - fs) / 2), col(t.fg), name.c_str());
+      ImVec2 ss = f.regular->CalcTextSizeA(11 * k(), FLT_MAX, 0, status.c_str());
+      d->AddText(f.regular, 11 * k(), ImVec2(q.x + W - ss.x, q.y + (rh - ss.y) / 2), col(c), status.c_str());
+      ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + rh));
+      ImGui::Dummy(ImVec2(W, 0));
       any = true;
     };
     for (auto& [login, state] : p.reviews) {
       Pill rp = review_pill(state);
-      row(login, rp.text, tone_fg(rp.tone) == t.neutral ? t.muted : tone_fg(rp.tone));
+      row(login, lower(rp.text), tone_fg(rp.tone) == t.neutral || rp.tone == Tone::Attention ? t.muted : tone_fg(rp.tone));
       named.insert(lower(who(login)));
     }
     // people a plugin tags on the PR (anton-slkx's 👀 reviewers)
@@ -1071,15 +995,17 @@ void Gui::preview_pane() {
           row(login, "tagged by " + cfg.plugins[i].name, t.attention);
         }
     if (!any) {
-      ImGui::Dummy(ImVec2(1, 6 * k()));
-      text(p.review_decision == "REVIEW_REQUIRED" ? "No reviews yet · review required" : "No reviews yet", t.muted);
-      ImGui::Dummy(ImVec2(1, 6 * k()));
+      ImGui::Dummy(ImVec2(1, 4 * k()));
+      text(p.review_decision == "REVIEW_REQUIRED" ? "No reviews yet · review required" : "No reviews yet", t.muted, nullptr, 11);
     }
-  });
-  ImGui::Dummy(ImVec2(1, 8 * k()));
-  box(*this, "From plugins", [&] { plugins_box(p, false); });
-  ImGui::Dummy(ImVec2(1, 10 * k()));
+  }
+  ImGui::Dummy(ImVec2(1, 12 * k()));
+  section("Plugins");
+  plugins_box(p);
+  ImGui::Dummy(ImVec2(1, 12 * k()));
   section("Description");
+  ImGui::Dummy(ImVec2(1, 6 * k()));
+  ImGui::PopStyleVar();
   want_body(p.url, p.updated);
   const Body& b = bodies[p.url];
   if (b.loading && b.text.empty()) text("Loading…", t.muted);

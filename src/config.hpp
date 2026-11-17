@@ -101,7 +101,7 @@ struct GuiColumn {
 // ignores them; config_write keeps them either way.
 struct GuiPrefs {
   std::string theme = "system";              // dark | light | system (the OS appearance)
-  int font_size = 13;                        // the interface size, 11-18 px
+  int font_size = 12;                        // the interface size, 11-18 px
   std::string code_font = "JetBrains Mono";  // or "System monospace"
   std::string density = "compact";           // compact | cozy | roomy: the PR list's rows, 24 | 28 | 34
   std::vector<GuiColumn> columns = [] {      // every kGuiColumns name once, in the order shown

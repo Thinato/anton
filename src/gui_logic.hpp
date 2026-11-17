@@ -39,7 +39,7 @@ struct Theme {
   uint32_t bg, panel, inset, border, border_muted, fg, muted, accent, accent_muted, tab_line, sel, sel_mark,
       success, success_muted, success_soft, danger, danger_muted, attention, attention_muted, done, done_muted,
       neutral, neutral_muted, btn, input_bg, primary, primary_hover, primary_border, empty, scrim, shadow,
-      palette_bg, palette_foot, palette_sel;
+      palette_bg, palette_foot, palette_sel, fg2;  // fg2: the canvas's secondary text, a step under fg
 };
 
 inline Theme make_theme(bool dark) {
@@ -51,13 +51,13 @@ inline Theme make_theme(bool dark) {
             c("rgba(248,81,73,0.12)"), c("#d29922"), c("rgba(187,128,9,0.15)"), c("#ab7df8"),
             c("rgba(171,125,248,0.15)"), c("#9198a1"), c("rgba(101,108,118,0.25)"), c("#212830"), c("#0d1117"),
             c("#238636"), c("#29903b"), c("rgba(240,246,252,0.1)"), c("#2a313c"), c("rgba(1,4,9,0.6)"),
-            c("rgba(1,4,9,0.85)"), c("#151b23"), c("#0d1117"), c("rgba(56,139,253,0.15)")};
+            c("rgba(1,4,9,0.85)"), c("#151b23"), c("#0d1117"), c("rgba(56,139,253,0.15)"), c("#d1d7e0")};
   return {false, c("#ffffff"), c("#f6f8fa"), c("#eff2f5"), c("#d1d9e0"), c("#e6eaef"), c("#1f2328"),
           c("#59636e"), c("#0969da"), c("#ddf4ff"), c("#fd8c73"), c("#ddf4ff"), c("#0969da"), c("#1a7f37"),
           c("#dafbe1"), c("#f1fbf3"), c("#d1242f"), c("#ffebe9"), c("#9a6700"), c("#fff8c5"), c("#8250df"),
           c("#fbefff"), c("#59636e"), c("#e6eaef"), c("#f6f8fa"), c("#ffffff"), c("#1f883d"), c("#1c8139"),
           c("rgba(31,35,40,0.15)"), c("#d1d9e0"), c("rgba(31,35,40,0.35)"), c("rgba(31,35,40,0.25)"),
-          c("#ffffff"), c("#f6f8fa"), c("#ddf4ff")};
+          c("#ffffff"), c("#f6f8fa"), c("#ddf4ff"), c("#25292e")};
 }
 
 // "dark", "light" or "system" (the OS appearance, os_dark) -> dark?

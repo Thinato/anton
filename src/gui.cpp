@@ -145,7 +145,7 @@ void Gui::apply_theme() {
   ImGuiStyle& s = ImGui::GetStyle();
   s.FontSizeBase = static_cast<float>(cfg.gui.font_size);
   s.WindowPadding = ImVec2(0, 0);
-  s.FramePadding = ImVec2(10 * k(), 7 * k());
+  s.FramePadding = ImVec2(12 * k(), 8 * k());  // a pane's tab bar: 12px text on 28px
   s.ItemSpacing = ImVec2(8 * k(), 6 * k());
   s.ItemInnerSpacing = ImVec2(6 * k(), 4 * k());
   s.CellPadding = ImVec2(8 * k(), 0);
@@ -353,18 +353,15 @@ void Gui::segments(const std::vector<std::pair<std::string, uint32_t>>& parts, I
   ImGui::PopFont();
 }
 
-// A rounded pill: a dot (or a glyph) and the text, in a tone.
+// A rounded pill, 18px: a dot (or a glyph) and 11px text, in a tone.
 void Gui::pill(const std::string& s, Tone tn, float h, const char* glyph, bool dot) {
-  ImGui::PushFont(f.medium, 12 * k());
-  float H = h * k(), pad = (h > 22 ? 10 : 8) * k(), gap = 5 * k();
-  ImVec2 ts = ImGui::CalcTextSize(s.c_str());
+  float H = h * k(), pad = 8 * k(), gap = 6 * k(), fs = 11 * k();
+  ImVec2 ts = f.regular->CalcTextSizeA(fs, FLT_MAX, 0, s.c_str());
   float lead = 0;
   ImVec2 gs;
   if (glyph) {
-    ImGui::PushFont(f.mono, 12 * k());
-    gs = ImGui::CalcTextSize(glyph);
-    ImGui::PopFont();
-    lead = gs.x + gap;
+    gs = f.mono->CalcTextSizeA(fs, FLT_MAX, 0, glyph);
+    lead = gs.x + 5 * k();
   } else if (dot) {
     lead = 6 * k() + gap;
   }
@@ -373,17 +370,23 @@ void Gui::pill(const std::string& s, Tone tn, float h, const char* glyph, bool d
   ImDrawList* d = ImGui::GetWindowDrawList();
   d->AddRectFilled(p, p + size, col(tone_bg(tn)), H / 2);
   float x = p.x + pad;
-  if (glyph) {
-    ImGui::PushFont(f.mono, 12 * k());
-    d->AddText(ImVec2(x, p.y + (H - gs.y) / 2), col(tone_fg(tn)), glyph);
-    ImGui::PopFont();
-  } else if (dot) {
-    d->AddCircleFilled(ImVec2(x + 3 * k(), p.y + H / 2), 3 * k(), col(tone_fg(tn)));
-  }
-  x += lead;
-  d->AddText(ImVec2(x, p.y + (H - ts.y) / 2), col(tone_fg(tn)), s.c_str());
+  if (glyph) d->AddText(f.mono, fs, ImVec2(x, p.y + (H - gs.y) / 2), col(tone_fg(tn)), glyph);
+  else if (dot) d->AddCircleFilled(ImVec2(x + 3 * k(), p.y + H / 2), 3 * k(), col(tone_fg(tn)));
+  d->AddText(f.regular, fs, ImVec2(x + lead, p.y + (H - ts.y) / 2), col(tone_fg(tn)), s.c_str());
   ImGui::Dummy(size);
-  ImGui::PopFont();
+}
+
+// A PR's state as the canvas's rows and meta lines draw it: a 6px dot in
+// its tone and 11px text.
+void Gui::state_text(const Pill& pl, uint32_t text_color, float h) {
+  ImDrawList* d = ImGui::GetWindowDrawList();
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  float fs = 11 * k(), H = h * k();
+  std::string s = strip_emoji(pl.text);
+  ImVec2 ts = f.regular->CalcTextSizeA(fs, FLT_MAX, 0, s.c_str());
+  d->AddCircleFilled(ImVec2(p.x + 3 * k(), p.y + H / 2), 3 * k(), col(tone_fg(pl.tone)));
+  d->AddText(f.regular, fs, ImVec2(p.x + 11 * k(), p.y + (H - ts.y) / 2), col(text_color ? text_color : tone_fg(pl.tone)), s.c_str());
+  ImGui::Dummy(ImVec2(11 * k() + ts.x, H));
 }
 
 // A person's avatar: their first letter on their configured color.
@@ -397,50 +400,49 @@ void Gui::avatar(const std::string& login, float size) {
   ImDrawList* d = ImGui::GetWindowDrawList();
   ImVec2 c(pos.x + S / 2, pos.y + S / 2);
   d->AddCircleFilled(c, S / 2, IM_COL32(rgb >> 16, (rgb >> 8) & 0xff, rgb & 0xff, 255));
-  ImGui::PushFont(f.semibold, 11 * k() * size / 20);
-  ImVec2 ts = ImGui::CalcTextSize(letter.c_str());
-  d->AddText(ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), dark_text_on(rgb) ? col(0x0d1117ffu) : IM_COL32_WHITE, letter.c_str());
-  ImGui::PopFont();
+  float fs = S * 8 / 14;  // the canvas: 8px on 14
+  ImVec2 ts = f.semibold->CalcTextSizeA(fs, FLT_MAX, 0, letter.c_str());
+  d->AddText(f.semibold, fs, ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), dark_text_on(rgb) ? col(0x0d1117ffu) : IM_COL32_WHITE,
+             letter.c_str());
   ImGui::Dummy(ImVec2(S, S));
 }
 
-void Gui::diffstat_blocks(long add, long del) {
+// GitHub's five blocks, 7px with 2px between.
+void Gui::diffstat_blocks(long add, long del, float h) {
   auto b = diffstat(add, del);
   ImVec2 p = ImGui::GetCursorScreenPos();
-  float s = 7 * k(), gap = 1 * k();
-  float y = p.y + (ImGui::GetTextLineHeight() - s) / 2;
+  float s = 7 * k(), gap = 2 * k(), H = h > 0 ? h * k() : ImGui::GetTextLineHeight();
+  float y = p.y + (H - s) / 2;
   ImDrawList* d = ImGui::GetWindowDrawList();
   for (int i = 0; i < 5; ++i) {
     uint32_t c = b[static_cast<size_t>(i)] == 1 ? t.success : b[static_cast<size_t>(i)] == 2 ? t.danger : t.empty;
     float x = p.x + i * (s + gap);
     d->AddRectFilled(ImVec2(x, y), ImVec2(x + s, y + s), col(c), 1 * k());
   }
-  ImGui::Dummy(ImVec2(5 * s + 4 * gap, ImGui::GetTextLineHeight()));
+  ImGui::Dummy(ImVec2(5 * s + 4 * gap, H));
 }
 
 // A button as the canvas draws them: default (bordered, btn), primary
-// (green, white text) or ghost (no border). key: a dim hint after the label.
-float Gui::button_width(const std::string& label, Btn kind, const std::string& key, Icon icon) {
-  ImGui::PushFont(f.medium, 0.f);
-  float w = ImGui::CalcTextSize(label.c_str(), nullptr, true).x + (kind == Btn::Primary ? 28 : 24) * k();
-  ImGui::PopFont();
-  if (!key.empty()) w += f.mono->CalcTextSizeA(11 * k(), FLT_MAX, 0, key.c_str()).x + 6 * k();
-  if (icon) w += 20 * k();
+// (green, white text) or ghost (no border); 24px with 12px text, or 20px
+// with 11px inside a pane. key: a dim mono hint after the label.
+static float btn_text(float h) { return h <= 20 ? 11.f : 12.f; }
+static float btn_pad(float h, Btn kind) { return h <= 20 ? 7.f : kind == Btn::Primary ? 10.f : 8.f; }
+
+float Gui::button_width(const std::string& label, Btn kind, const std::string& key, Icon icon, float h) {
+  const char* end = ImGui::FindRenderedTextEnd(label.c_str());
+  float w = f.medium->CalcTextSizeA(btn_text(h) * k(), FLT_MAX, 0, label.c_str(), end).x + 2 * btn_pad(h, kind) * k();
+  if (!key.empty()) w += f.mono->CalcTextSizeA(10 * k(), FLT_MAX, 0, key.c_str()).x + 6 * k();
+  if (icon) w += 17 * k();
   return w;
 }
 
 bool Gui::button(const std::string& label, Btn kind, float h, const std::string& key, float w, Icon icon) {
-  ImGui::PushFont(f.medium, 0.f);
-  ImVec2 ts = ImGui::CalcTextSize(label.c_str(), nullptr, true);
-  ImVec2 ks(0, 0);
-  if (!key.empty()) {
-    ImGui::PushFont(f.mono, 11 * k());
-    ks = ImGui::CalcTextSize(key.c_str());
-    ImGui::PopFont();
-    ks.x += 6 * k();
-  }
-  float H = h * k(), pad = (kind == Btn::Primary ? 14 : 12) * k(), iw = icon ? 20 * k() : 0;
-  ImVec2 size(w > 0 ? w * k() : ts.x + ks.x + iw + pad * 2, H);
+  float H = h * k(), fs = btn_text(h) * k();
+  const char* end = ImGui::FindRenderedTextEnd(label.c_str());
+  ImVec2 ts = f.medium->CalcTextSizeA(fs, FLT_MAX, 0, label.c_str(), end);
+  ImVec2 ks = key.empty() ? ImVec2(0, 0) : f.mono->CalcTextSizeA(10 * k(), FLT_MAX, 0, key.c_str());
+  float kw = key.empty() ? 0 : ks.x + 6 * k(), iw = icon ? 17 * k() : 0;
+  ImVec2 size(w > 0 ? w * k() : button_width(label, kind, key, icon, h), H);
   ImVec2 p = ImGui::GetCursorScreenPos();
   bool clicked = ImGui::InvisibleButton(label.c_str(), size);
   bool hov = ImGui::IsItemHovered();
@@ -451,21 +453,16 @@ bool Gui::button(const std::string& label, Btn kind, float h, const std::string&
   if (bg) d->AddRectFilled(p, p + size, col(bg), 6 * k());
   if (kind != Btn::Ghost) d->AddRect(p, p + size, col(kind == Btn::Primary ? t.primary_border : t.border), 6 * k());
   uint32_t fg = kind == Btn::Primary ? 0xffffffffu : t.fg;
-  float x = p.x + (size.x - ts.x - ks.x - iw) / 2;
+  float x = p.x + (size.x - ts.x - kw - iw) / 2;
   if (icon) {
-    float is = icon == icon_play ? 10 * k() : 14 * k();
-    icon(d, ImVec2(x + (14 * k() - is) / 2, p.y + (H - is) / 2), is, col(icon == icon_play && kind != Btn::Primary ? t.success : fg));
+    float is = icon == icon_play ? 9 * k() : 11 * k();
+    icon(d, ImVec2(x + (11 * k() - is) / 2, p.y + (H - is) / 2), is, col(icon == icon_play && kind != Btn::Primary ? t.success : kind == Btn::Primary ? fg : t.muted));
     x += iw;
   }
-  const char* end = ImGui::FindRenderedTextEnd(label.c_str());
-  d->AddText(ImVec2(x, p.y + (H - ts.y) / 2), col(fg), label.c_str(), end);
-  if (!key.empty()) {
-    ImGui::PushFont(f.mono, 11 * k());
-    d->AddText(ImVec2(x + ts.x + 6 * k(), p.y + (H - ks.y) / 2), col(kind == Btn::Primary ? 0xffffffccu : t.muted),
+  d->AddText(f.medium, fs, ImVec2(x, p.y + (H - ts.y) / 2), col(fg), label.c_str(), end);
+  if (!key.empty())
+    d->AddText(f.mono, 10 * k(), ImVec2(x + ts.x + 6 * k(), p.y + (H - ks.y) / 2), col(kind == Btn::Primary ? 0xffffffbfu : t.muted),
                key.c_str());
-    ImGui::PopFont();
-  }
-  ImGui::PopFont();
   return clicked;
 }
 
@@ -476,16 +473,26 @@ bool Gui::icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, I
   bool clicked = ImGui::InvisibleButton(id, ImVec2(S, S));
   bool hov = ImGui::IsItemHovered();
   ImDrawList* d = ImGui::GetWindowDrawList();
-  if (bordered || hov) d->AddRectFilled(p, ImVec2(p.x + S, p.y + S), col(hov ? (t.dark ? t.border_muted : t.inset) : t.btn), 6 * k());
+  uint32_t bg = hov ? (t.dark ? t.border_muted : t.inset) : bordered ? t.btn : 0u;
+  if (bg) d->AddRectFilled(p, ImVec2(p.x + S, p.y + S), col(bg), 6 * k());
   if (bordered) d->AddRect(p, ImVec2(p.x + S, p.y + S), col(t.border), 6 * k());
-  float is = 14 * k();
-  g_icon_bg = col(bordered || hov ? (hov ? (t.dark ? t.border_muted : t.inset) : t.btn) : t.bg);
-  icon(d, ImVec2(p.x + (S - is) / 2, p.y + (S - is) / 2), is, col(bordered ? t.fg : t.muted));
+  float is = S / 2;
+  g_icon_bg = col(bg ? bg : t.panel);
+  icon(d, ImVec2(p.x + (S - is) / 2, p.y + (S - is) / 2), is, col(t.muted));
   if (tip && hov) ImGui::SetTooltip("%s", tip);
   return clicked;
 }
 
-void Gui::section(const std::string& title) { text(title, t.muted, f.semibold, 12); }
+// A pane's section: an 11px semibold muted label on a 22px row, a line under it.
+void Gui::section(const std::string& title) {
+  ImDrawList* d = ImGui::GetWindowDrawList();
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  float w = ImGui::GetContentRegionAvail().x, h = 22 * k();
+  ImVec2 ts = f.semibold->CalcTextSizeA(11 * k(), FLT_MAX, 0, title.c_str());
+  d->AddText(f.semibold, 11 * k(), ImVec2(p.x, p.y + (h - ts.y) / 2), col(t.muted), title.c_str());
+  d->AddLine(ImVec2(p.x, p.y + h - 0.5f), ImVec2(p.x + w, p.y + h - 0.5f), col(t.border_muted));
+  ImGui::Dummy(ImVec2(w, h));
+}
 
 bool Gui::link_row(const std::string& id, float h) {
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -919,13 +926,14 @@ static bool chord_pressed(const std::string& key) {
   return std::any_of(keys.begin(), keys.end(), [](ImGuiKey x) { return ImGui::IsKeyPressed(x, false); });
 }
 
-// The menus as ImGui draws them: Linux's menu bar (macOS has the system's).
-static void draw_items(const std::vector<Cmd>& items) {
+// Menu entries as ImGui draws them: Linux's menu bar (macOS has the
+// system's), and the list's Columns button on both.
+void draw_menu(const std::vector<Cmd>& items) {
   for (auto& c : items) {
     if (c.label.empty()) ImGui::Separator();
     else if (!c.run && !c.sub.empty()) {
       if (ImGui::BeginMenu(c.label.c_str(), c.enabled)) {
-        draw_items(c.sub);
+        draw_menu(c.sub);
         ImGui::EndMenu();
       }
     } else if (ImGui::MenuItem(c.label.c_str(), c.key.empty() ? nullptr : key_text(c.key).c_str(), c.check == 1,
@@ -947,7 +955,7 @@ void Gui::menu_bar() {
     d->AddLine(ImVec2(wp.x, wp.y + H - 1), ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + H - 1), col(t.border));
     for (auto& mn : menus())
       if (ImGui::BeginMenu(mn.title.c_str())) {
-        draw_items(mn.items);
+        draw_menu(mn.items);
         ImGui::EndMenu();
       }
     ImGui::EndMainMenuBar();
@@ -1014,22 +1022,22 @@ void Gui::status_bar() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, col(t.panel));
   ImGuiWindowFlags fl = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav;
-  if (ImGui::BeginViewportSideBar("##status", vp, ImGuiDir_Down, 26 * k(), fl)) {
+  if (ImGui::BeginViewportSideBar("##status", vp, ImGuiDir_Down, 22 * k(), fl)) {
     ImDrawList* d = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos();
     d->AddLine(wp, ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y), col(t.border));
-    ImGui::PushFont(f.regular, 12 * k());
-    float y = (26 * k() - ImGui::GetTextLineHeight()) / 2;
+    ImGui::PushFont(f.regular, 11 * k());
+    float y = (22 * k() - ImGui::GetTextLineHeight()) / 2;
     ImGui::SetCursorPos(ImVec2(12 * k(), y));
     auto item = [&](const std::string& s, uint32_t c, uint32_t dot = 0) {
       if (dot) {
         ImVec2 p = ImGui::GetCursorScreenPos();
-        d->AddCircleFilled(ImVec2(p.x + 3.5f * k(), p.y + ImGui::GetTextLineHeight() / 2), 3.5f * k(), col(dot));
-        ImGui::Dummy(ImVec2(7 * k(), 1));
-        ImGui::SameLine(0, 6 * k());
+        d->AddCircleFilled(ImVec2(p.x + 3 * k(), p.y + ImGui::GetTextLineHeight() / 2), 3 * k(), col(dot));
+        ImGui::Dummy(ImVec2(6 * k(), 1));
+        ImGui::SameLine(0, 5 * k());
       }
       text(s, c);
-      ImGui::SameLine(0, 16 * k());
+      ImGui::SameLine(0, 14 * k());
     };
     for (size_t i = 0; i < cfg.plugins.size(); ++i) {
       std::string problem = plugin_problem(i), name = cfg.plugins[i].name;
@@ -1061,7 +1069,7 @@ void Gui::status_bar() {
     right.push_back({"Refreshes every " + std::to_string(cfg.refresh_seconds) + "s", t.muted});
     right.push_back({std::string("anton ") + kVersion, t.muted});
     float w = 0;
-    for (auto& [s, c] : right) w += ImGui::CalcTextSize(s.c_str()).x + 16 * k();
+    for (auto& [s, c] : right) w += ImGui::CalcTextSize(s.c_str()).x + 14 * k();
     float x = std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - w + 4 * k());
     ImGui::SetCursorPos(ImVec2(x, y));
     for (auto& [s, c] : right) item(s, c);
@@ -1174,11 +1182,13 @@ void Gui::dock_spaces() {
     }
     if (show_outline) outline_pane();
     if (show_llm) llm_pane();
-    // just placed: its tab and Results are the ones shown (the newest tab in a node would be)
+    // just placed: its tab and Results' are the ones shown in their nodes,
+    // whatever has the focus (the newest tab in a node would be)
     if (pick_tabs > 0) {
       --pick_tabs;
-      if (cfg.gui.results) ImGui::SetWindowFocus("###results");
-      ImGui::SetWindowFocus("###reader");
+      for (const char* name : {"###results", "###reader"})
+        if (ImGuiWindow* w = ImGui::FindWindowByName(name); w && w->DockNode && w->DockNode->TabBar)
+          w->DockNode->TabBar->NextSelectedTabId = w->TabId;
     }
   }
 }

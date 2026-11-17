@@ -115,14 +115,19 @@ ImFont* add_file(const char* path, bool merge) {
   return ImGui::GetIO().Fonts->AddFontFromFileTTF(path, 13.f, &c);
 }
 
-// Inter for text with JetBrains Mono under it for the symbols Inter lacks
-// (✓ ✗ ⋯ ◦ ▶), then the system's symbol font for the rest (⚙).
-ImFont* ui_font(const unsigned char* data, unsigned size) {
-  ImFont* f = add_font(data, size);
-  add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size, true);
+// The system's symbol font, merged into the font just added (⚙ ↵ ⌘).
+void symbols() {
   for (const char* p : {"/System/Library/Fonts/Apple Symbols.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf"})
     if (add_file(p, true)) break;
+}
+
+// Inter for text with JetBrains Mono under it for the symbols Inter lacks
+// (✓ ✗ ⋯ ◦ ▶), then the system's symbol font for the rest.
+ImFont* ui_font(const unsigned char* data, unsigned size) {
+  ImFont* f = add_font(data, size);
+  add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size, true);
+  symbols();
   return f;
 }
 
@@ -298,6 +303,7 @@ int main(int argc, char** argv) {
   g->f.medium = ui_font(font_Inter_Medium, font_Inter_Medium_size);
   g->f.semibold = ui_font(font_Inter_SemiBold, font_Inter_SemiBold_size);
   ImFont* jetbrains = add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size);
+  symbols();  // ↵ and ⌘ in key hints
   ImFont* sysmono = system_mono();
   g->f.mono = jetbrains;
   g->apply_theme();

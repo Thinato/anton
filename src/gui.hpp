@@ -156,7 +156,11 @@ struct Gui : Core {
   void save(const std::string& done = "");  // config.json, gui keys included
   void open_file(const std::string& path);  // $VISUAL/$EDITOR if graphical, else the OS's opener
   void open_config();
-  float k() const { return cfg.gui.font_size / 13.f; }  // the interface size, relative to the canvas's 13px
+  // The type scale (06-gui.md): sizes are the canvas's px at its 12px
+  // interface size, scaled by k() to the configured one.
+  float k() const { return cfg.gui.font_size / 12.f; }
+  float reading() const { return 13; }  // descriptions, specs, notes
+  float code() const { return 11; }     // mono: numbers, paths, logs (key hints one less)
 
   // -- the PR list (gui_list.cpp) ---------------------------------------------------
   std::vector<Pr> cur_rows;  // the active view's rows this frame
@@ -168,8 +172,10 @@ struct Gui : Core {
   void preview_pane();
   void filter_bar();
   void pr_table();
+  void pr_cells(const Pr& p, const std::vector<std::string>& cols, float y0, float rh, bool show_owner);
   void open_reader(const Pr& p);
-  void plugins_box(const Pr& p, bool compact);
+  void plugins_box(const Pr& p);
+  void meta_line(const Pr& p, const std::vector<std::pair<std::string, uint32_t>>& mono);
   void act(const std::string& key);  // a list key, from a key, a button or the palette
 
   // -- the reader (gui_reader.cpp) ---------------------------------------------------
@@ -190,7 +196,8 @@ struct Gui : Core {
   void jump(const std::string& path, int src);  // to source line src of a doc, its tab opened
   // Spans laid out word by word in width (size: canvas px), from the cursor;
   // the height used. measure: lay out only.
-  float rich(const std::vector<md::Span>& spans, float width, float size, uint32_t color, bool measure = false);
+  float rich(const std::vector<md::Span>& spans, float width, float size, uint32_t color, bool measure = false,
+             float line = 0);  // line: its height (canvas px); 0: 20 on 13
   float rich_width(const std::vector<md::Span>& spans, float size);
   std::map<size_t, std::vector<md::Block>> parsed;  // by the text's hash
   const std::vector<md::Block>& blocks_of(const std::string& text);
@@ -206,16 +213,18 @@ struct Gui : Core {
   uint32_t tone_bg(Tone tn) const;
   void text(const std::string& s, uint32_t color, ImFont* font = nullptr, float size = 0);
   void text_wrapped(const std::string& s, uint32_t color, ImFont* font = nullptr, float size = 0, float wrap = 0);
-  void pill(const std::string& s, Tone tn, float h = 22, const char* glyph = nullptr, bool dot = true);
-  void avatar(const std::string& login, float size = 20);
-  void diffstat_blocks(long add, long del);
+  void pill(const std::string& s, Tone tn, float h = 18, const char* glyph = nullptr, bool dot = true);
+  void state_text(const Pill& pl, uint32_t text_color = 0, float h = 16);  // ● Review required; 0: the tone's color
+  void avatar(const std::string& login, float size = 14);
+  void diffstat_blocks(long add, long del, float h = 0);  // h: the line to center on (0: the text's)
   using Icon = void (*)(ImDrawList*, ImVec2, float, ImU32);
-  bool button(const std::string& label, Btn kind = Btn::Default, float h = 28, const std::string& key = "",
+  bool button(const std::string& label, Btn kind = Btn::Default, float h = 24, const std::string& key = "",
               float w = 0, Icon icon = nullptr);
-  float button_width(const std::string& label, Btn kind = Btn::Default, const std::string& key = "", Icon icon = nullptr);
-  bool icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size = 28,
+  float button_width(const std::string& label, Btn kind = Btn::Default, const std::string& key = "", Icon icon = nullptr,
+                     float h = 24);
+  bool icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size = 24,
                    bool bordered = true, const char* tip = nullptr);
-  void section(const std::string& title);  // a muted 12px label
+  void section(const std::string& title);  // 22px: an 11px semibold muted label, a line under it
   bool link_row(const std::string& id, float h);  // a full-width hover row; true on click
   void segments(const std::vector<std::pair<std::string, uint32_t>>& parts, ImFont* font = nullptr, float size = 0);
 };
@@ -245,6 +254,7 @@ bool input(const char* id, std::string& s, ImGuiInputTextFlags flags = 0, const 
 std::string tilde(const std::string& path);
 std::string short_repo(const std::string& repo);
 std::string sort_label(Sort s);  // "Recently updated"
+void draw_menu(const std::vector<Cmd>& items);  // as ImGui menu items, in an open menu or popup
 
 #ifdef __APPLE__
 // gui_menu_mac.mm
