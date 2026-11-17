@@ -656,22 +656,6 @@ void icon_chevron(ImDrawList* d, ImVec2 p, float s, ImU32 c) {
   d->AddLine(at(p, s, 8, 10.4f), at(p, s, 12, 6.4f), c, w);
 }
 
-void icon_back(ImDrawList* d, ImVec2 p, float s, ImU32 c) {
-  float w = 1.6f * s / 16;
-  d->AddLine(at(p, s, 10, 3), at(p, s, 5, 8), c, w);
-  d->AddLine(at(p, s, 5, 8), at(p, s, 10, 13), c, w);
-}
-
-void icon_sliders(ImDrawList* d, ImVec2 p, float s, ImU32 c) {
-  float w = 1.5f * s / 16;
-  d->AddLine(at(p, s, 2, 4), at(p, s, 9, 4), c, w);
-  d->AddLine(at(p, s, 12, 4), at(p, s, 14, 4), c, w);
-  d->AddLine(at(p, s, 2, 12), at(p, s, 4, 12), c, w);
-  d->AddLine(at(p, s, 7, 12), at(p, s, 14, 12), c, w);
-  d->AddCircle(at(p, s, 10.5f, 4), 1.5f * s / 16, c, 0, w);
-  d->AddCircle(at(p, s, 5.5f, 12), 1.5f * s / 16, c, 0, w);
-}
-
 void icon_grip(ImDrawList* d, ImVec2 p, float s, ImU32 c) {
   for (float x : {5.f, 11.f})
     for (float y : {4.f, 8.f, 12.f}) d->AddCircleFilled(at(p, s, x, y), 1.3f * s / 16, c);
@@ -715,6 +699,11 @@ const Pr* Gui::current_pr() const {
 }
 
 void Gui::quit() { glfwSetWindowShouldClose(window, 1); }
+
+void Gui::restart_plugin(size_t i) {
+  if (plugins) plugins->restart(i);
+  flash("restarting " + cfg.plugins[i].name);
+}
 
 void Gui::zoom(int by) {
   int to = by ? std::clamp(cfg.gui.font_size + by, 9, 20) : GuiPrefs{}.font_size;
@@ -876,10 +865,7 @@ std::vector<Menu> Gui::menus() {
                           [this, key = a.key, url] { plugin_action(key, url); }, cur != nullptr});
         }
       if (!acts.empty()) acts.push_back(sep);
-      acts.push_back({"Restart", "", [this, i] {
-                        if (plugins) plugins->restart(i);
-                        flash("restarting " + cfg.plugins[i].name);
-                      }});
+      acts.push_back({"Restart", "", [this, i] { restart_plugin(i); }});
       pl.push_back({cfg.plugins[i].name, "", nullptr, true, -1, acts});
     }
     pl.push_back(sep);
@@ -911,8 +897,7 @@ std::vector<Menu> Gui::menus() {
 // F11: the monitor the window is mostly on, at its mode; again, back where it was.
 void Gui::toggle_fullscreen() {
   static int x, y, w, h;
-  if (GLFWmonitor* on = glfwGetWindowMonitor(window)) {
-    (void)on;
+  if (glfwGetWindowMonitor(window)) {
     glfwSetWindowMonitor(window, nullptr, x, y, w, h, 0);
     return;
   }

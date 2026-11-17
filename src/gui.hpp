@@ -139,6 +139,7 @@ struct Gui : Core {
   void menu_bar();            // the in-window one (not on macOS)
   void toolbar();
   void quit();
+  void restart_plugin(size_t i);  // and says so
 #ifndef __APPLE__
   void toggle_fullscreen();  // F11
 #endif
@@ -252,8 +253,6 @@ void icon_filter(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_columns(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_cross(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_chevron(ImDrawList* d, ImVec2 p, float s, ImU32 c);
-void icon_back(ImDrawList* d, ImVec2 p, float s, ImU32 c);
-void icon_sliders(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_grip(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 
 // ImGui's text input on a std::string.

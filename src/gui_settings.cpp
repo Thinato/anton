@@ -719,10 +719,7 @@ void Gui::settings_window() {
       float ow = open_label.empty() ? 0 : button_width(open_label, Btn::Default, "", nullptr, 20);
       float rw = button_width("Restart", Btn::Default, "", nullptr, 20);
       ImGui::SetCursorScreenPos(ImVec2(bx - ow - (ow ? 4 * k() : 0) - rw, rowy + 2 * k()));
-      if (button("Restart", Btn::Default, 20) && plugins) {
-        plugins->restart(i);
-        flash("restarting " + pc.name);
-      }
+      if (button("Restart", Btn::Default, 20) && plugins) restart_plugin(i);
       if (!file.empty()) {
         ImGui::SameLine(0, 4 * k());
         if (button(open_label, Btn::Default, 20)) open_file(file);
@@ -887,23 +884,17 @@ void Gui::palette() {
   for (auto [id, name] : {std::pair{"dark", "Dark"}, {"light", "Light"}, {"system", "Match system"}})
     items.push_back({g, "⚙", std::string("Theme: ") + name, cfg.gui.theme == id ? "current" : "", "", t.muted,
                      [this, id = std::string(id)] { set_theme(id); }});
-  auto pane = [&](const std::string& name, bool* v) {
-    items.push_back({g, "⚙", (*v ? "Hide the " : "Show the ") + name + " pane", "View › Panes", "", t.muted, [this, v] {
-                       *v = !*v;
-                       save();
-                     }});
-  };
-  pane("Views", &cfg.gui.views);
-  pane("Preview", &cfg.gui.preview);
-  pane("Run log", &cfg.gui.run_log);
+  for (auto& mn : menus())  // the panes, as View toggles them
+    if (mn.title == "View")
+      for (auto& c : mn.items)
+        if (c.run && c.check >= 0)
+          items.push_back({g, "⚙", (c.check ? "Hide the " : "Show the ") + c.label + " pane", "View › Panes", "", t.muted, c.run});
   items.push_back({g, "⚙", "Reset layout", "the panes as they first were", "", t.muted, [this] { reset_layout = true; }});
   items.push_back({g, "⚙", "Open config.json", tilde(config_path()), "", t.muted, [this] { open_config(); }});
   for (size_t i = 0; i < cfg.plugins.size(); ++i) {
     std::string name = cfg.plugins[i].name, file = plugin_file(cfg.plugins[i]);
     std::string st = plugin_problem(i).empty() ? (plugin_up(i) ? "running" : "starting") : "not running";
-    items.push_back({g, "⚙", "Restart the " + name + " plugin", st, "", t.muted, [this, i] {
-                       if (plugins) plugins->restart(i);
-                     }});
+    items.push_back({g, "⚙", "Restart the " + name + " plugin", st, "", t.muted, [this, i] { restart_plugin(i); }});
     if (!file.empty())
       items.push_back({g, "⚙", "Open " + std::filesystem::path(file).filename().string(), name + "'s settings", "", t.muted,
                        [this, file] { open_file(file); }});
