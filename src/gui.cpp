@@ -726,11 +726,14 @@ void Gui::zoom(int by) {
 // Mod held unless it already is: a menu click has no key down, a shortcut does.
 void Gui::send_key(int key) {
   ImGuiIO& io = ImGui::GetIO();
-  bool held = io.KeyCtrl;  // ImGui's Ctrl is Cmd on macOS
+  // held now, on the keyboard: io.KeyCtrl is last frame's, and a quick ⌘V
+  // would lose its paste to a Mod up sent while Cmd is still down
 #ifdef __APPLE__
   ImGuiKey mod = ImGuiMod_Super;  // what the GLFW backend sends for Cmd; ImGui swaps it
+  bool held = glfwGetKey(window, GLFW_KEY_LEFT_SUPER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SUPER) == GLFW_PRESS;
 #else
   ImGuiKey mod = ImGuiMod_Ctrl;
+  bool held = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 #endif
   if (!held) io.AddKeyEvent(mod, true);
   io.AddKeyEvent(static_cast<ImGuiKey>(key), true);
@@ -799,7 +802,7 @@ std::vector<Menu> Gui::menus() {
     for (auto& c : g.columns)
       if (c.name == "labels" || c.name == "tags") cols.push_back({c.name == "labels" ? "Labels" : "Plugin tags", "", flag(&c.shown), true, c.shown});
     cols.push_back(sep);
-    cols.push_back({"Customize…", "Mod+,", [this] {
+    cols.push_back({"Customize…", "", [this] {  // Mod+, is Settings…'s
                       settings_open = true;
                       settings_page = 2;
                     }});
@@ -932,10 +935,17 @@ void Gui::toggle_fullscreen() {
 }
 #endif
 
-// "Mod+K" as the platform writes it: Ctrl+K here (the NSMenus draw their own).
+// "Shift+Mod+R" as the platform writes it: ⇧⌘R on macOS, Shift+Ctrl+R
+// elsewhere. The UI font has the symbols (Apple Symbols is merged in).
 static std::string key_text(const std::string& key) {
   std::string s = key;
-  if (size_t at = s.find("Mod+"); at != std::string::npos) s.replace(at, 4, "Ctrl+");
+#ifdef __APPLE__
+  for (auto [from, to] : {std::pair{"Ctrl+", "⌃"}, {"Shift+", "⇧"}, {"Mod+", "⌘"}})
+#else
+  for (auto [from, to] : {std::pair{"Mod+", "Ctrl+"}})
+#endif
+    for (size_t at = s.find(from); at != std::string::npos && s.size() > std::strlen(from); at = s.find(from, at))
+      s.replace(at, std::strlen(from), to);
   return s;
 }
 
@@ -1169,7 +1179,8 @@ void Gui::dock_reader(ImGuiID dockspace) {
   ImGuiID node = dock_of("###preview");
   if (!node) node = dock_of("###prs");
   bool fresh = !ImGui::FindWindowByName("###results") && !ImGui::FindWindowSettingsByID(ImHashStr("###results"));
-  if (node && (fresh || relayout)) {
+  bool rebuilt = relayout;  // where the reader was is gone with the old layout
+  if (node && (fresh || rebuilt)) {
     ImGuiDockNode* n = ImGui::DockBuilderGetNode(node);
     float h = n && n->Size.y > 0 ? n->Size.y : ImGui::GetMainViewport()->WorkSize.y;
     ImGuiID top = 0;
@@ -1181,7 +1192,7 @@ void Gui::dock_reader(ImGuiID dockspace) {
   relayout = false;
   const std::string& where = cfg.gui.reader_placement;
   bool known = ImGui::FindWindowByName("###reader") || ImGui::FindWindowSettingsByID(ImHashStr("###reader"));
-  if (where == "last" && known) return;
+  if (where == "last" && known && !rebuilt) return;
   if (where == "window") reader_float = true;
   else reader_dock = node;
 }
@@ -1203,6 +1214,12 @@ void Gui::dock_spaces() {
   ImGui::PopStyleVar(3);
   ImGuiID id = ImGui::GetID("MainDock");
   ImVec2 size = ImGui::GetContentRegionAvail();
+  // A layout from before the reader was a tab has its panes in a dock space
+  // of their own, never submitted now: it goes, and they get a node again.
+  if (ImGuiID old = ImGui::GetID("ReaderDock"); ImGui::DockBuilderGetNode(old)) {
+    ImGui::DockBuilderRemoveNode(old);
+    relayout = true;
+  }
   if (reset_layout || !laid_out(id, {"###views", "###prs", "###preview"})) {
     build_layout(id, size);
     reset_layout = false;

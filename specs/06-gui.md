@@ -80,7 +80,7 @@ isn't matched by the menu and reaches `keys()`, which runs it once.
 - **View**, as the canvas: Views `⌘1`, Preview `⌘2`, Results `⇧⌘R`,
   Run log `⌘J` (each a pane, checked while shown); Columns ▸ (Number,
   Repo, Size (+/−), Size blocks, State, Age, Author, Avatars, Labels,
-  Plugin tags, Customize… `⌘,`), Row height ▸ (Compact 24, Cozy 28, Roomy
+  Plugin tags, Customize…, which opens Settings › PR list), Row height ▸ (Compact 24, Cozy 28, Roomy
   34), State style ▸ (Circle and label, Coloured text, Pill); Theme ▸
   (Dark, Light, Match System), Zoom In `⌘+`, Zoom Out `⌘−`, Actual Size
   `⌘0` (the interface size); Reset Layout, Enter Full Screen `⌃⌘F`
@@ -289,7 +289,9 @@ the current directory. With no layout file (or Reset Layout, in View or
 Settings) the dock space is built with ImGui's DockBuilder to the canvas's
 proportions, scaled with the interface size: Views 200px on the left,
 Preview 520px on the right, Pull requests in between; the reader's node
-and the one under it come when a PR is opened.
+and the one under it come when a PR is opened. A layout file from before
+the reader was a tab (its panes in a `ReaderDock` dock space of their own)
+loses that dock space; the next reader gets its node under Preview.
 
 View (and Settings › Appearance) hides or shows Views, Preview, Results,
 Run log (with Problems) and the status bar; they're saved in config.json.
@@ -366,7 +368,7 @@ where it is:
 | `code_size` | `11` | mono: numbers, paths, logs, 9–20 |
 | `code_font` | `"JetBrains Mono"` | or `"System monospace"` |
 | `density` | `"compact"` | the list's rows: `compact` 24px, `cozy` 28, `roomy` 34 (`comfortable`, the old name, reads as `roomy`) |
-| `columns` | as above | the list's columns in order: `number`, `repo`, `size`, `blocks` (the size as five squares), `state`, `age`, `author`, `labels`, `tags` (the plugins'); a name shows it, `{"name": ..., "hidden": true}` keeps its place hidden; a column left out goes last, hidden. The title is always shown, last |
+| `columns` | as above | the list's columns in order: `number`, `repo`, `size`, `blocks` (the size as five squares), `state`, `age`, `author`, `labels`, `tags` (the plugins'); a name shows it, `{"name": ..., "hidden": true}` keeps its place hidden; a column left out goes last, hidden; a name this build doesn't know is skipped. The title is always shown, last |
 | `author_style` | `"avatar"` | `avatar` (a circle and the name) or `color` (the name in a per-person colour) |
 | `state_style` | `"dot"` | `dot` (a dot and the label), `text` (the label in the state's colour) or `pill` |
 | `reader_placement` | `"beside_preview"` | where Open in reader puts the reader: `beside_preview`, `last` or `window` |

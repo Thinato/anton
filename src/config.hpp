@@ -196,9 +196,9 @@ inline std::string parse_gui(const nlohmann::json& g, GuiPrefs& p) {
       for (auto& v : g.at("columns")) {
         GuiColumn c{v.is_string() ? v.get<std::string>() : v.value("name", std::string()), true};
         if (v.is_object()) c.shown = !v.value("hidden", false);
-        if (c.name == "title") continue;
-        if (std::find(kGuiColumns.begin(), kGuiColumns.end(), c.name) == kGuiColumns.end())
-          return "gui.columns: no column \"" + c.name + "\" (" + join(kGuiColumns) + ")";
+        // the title always shows; a column from a newer anton is skipped, so
+        // the rest of the gui keys still load (and aren't written over)
+        if (std::find(kGuiColumns.begin(), kGuiColumns.end(), c.name) == kGuiColumns.end()) continue;
         if (std::none_of(cols.begin(), cols.end(), [&](const GuiColumn& x) { return x.name == c.name; })) cols.push_back(c);
       }
       for (auto& n : kGuiColumns)

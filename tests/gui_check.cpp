@@ -188,6 +188,14 @@ int main() {
     assert(g.columns[2].name == "blocks" && g.columns[2].shown);
     assert(g.columns[3].name == "number" && !g.columns[3].shown && !g.shows("labels"));
 
+    // a column a newer anton knows is skipped; the other gui keys still load
+    Config newer;
+    assert(parse_config(R"({"gui": {"theme": "dark", "columns": ["repo", "reactions", {"name": "ci"}, "number"]}})", newer).empty());
+    assert(newer.gui_error.empty() && newer.gui.theme == "dark");
+    assert(newer.gui.columns.size() == kGuiColumns.size());
+    assert(newer.gui.columns[0].name == "repo" && newer.gui.columns[1].name == "number" && newer.gui.columns[1].shown);
+    assert(!newer.gui.shows("size"));
+
     // an old config: "comfortable" is roomy now, and nothing else moves
     Config old;
     assert(parse_config(R"({"gui": {"theme": "dark", "font_size": 13, "density": "comfortable"}})", old).empty());
@@ -199,7 +207,6 @@ int main() {
                               {R"({"gui": {"state_style": "icon"}})", "gui.state_style"},
                               {R"({"gui": {"density": "tight"}})", "gui.density"},
                               {R"({"gui": {"reader_placement": "left"}})", "gui.reader_placement"},
-                              {R"({"gui": {"columns": ["number", "colour"]}})", "gui.columns"},
                               {R"({"gui": {"columns": "number"}})", "gui.columns"}}) {
       Config b;
       assert(parse_config(json, b).empty() && b.gui_error.starts_with(want) && b.gui == GuiPrefs{});
