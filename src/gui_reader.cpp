@@ -937,8 +937,9 @@ void Gui::results_pane() {
     section("Actions");
     ImGui::Dummy(ImVec2(1, 4 * k()));
     for (auto& [i, a] : others) {
-      if (button(strip_emoji(a.button.empty() ? a.label : a.button) + "##act" + a.id, Btn::Default, 20, a.key))
+      if (button(button_label(a.button, a.label, a.id) + "##act" + a.id, Btn::Default, 20, a.key))
         plugin_action(a.key, reader_url);
+      if (ImGui::IsItemHovered()) tip("%s  %s", strip_emoji(a.label.empty() ? a.id : a.label).c_str(), a.key.c_str());
       ImGui::SameLine(0, 4 * k());
     }
     ImGui::NewLine();

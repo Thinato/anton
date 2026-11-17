@@ -342,7 +342,7 @@ names. It only runs when you press the key. Details in
 
 `anton-gui` is the same anton in a window, in GitHub's light and dark
 colors: the views on the left, the PR list with its filter chips, and a
-preview with what each plugin says and its buttons (`Run specs`). It reads
+preview with what each plugin says and its buttons (`Run`). It reads
 the same `config.json` and runs the same plugins.
 
 ![anton-gui: the views, the PR list and a PR's preview, dark](docs/gui.png)

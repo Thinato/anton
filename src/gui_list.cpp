@@ -671,7 +671,7 @@ void Gui::pr_table() {
         flash("copied " + p.url);
       }
       for (auto& [i, a] : plugin_keys())
-        if (ImGui::MenuItem(strip_emoji(a.button.empty() ? a.label : a.button).c_str(), a.key.c_str()))
+        if (ImGui::MenuItem(button_label(a.button, a.label, a.id).c_str(), a.key.c_str()))
           plugin_action(a.key, p.url);
       ImGui::EndPopup();
     }
@@ -858,11 +858,12 @@ void Gui::plugins_box(const Pr& p) {
     any = true;
     // the buttons, right-aligned
     float bw = 0;
-    for (auto& a : acts) bw += button_width(strip_emoji(a.button.empty() ? a.label : a.button), Btn::Default, a.key, nullptr, 20) + 4 * k();
+    for (auto& a : acts) bw += button_width(button_label(a.button, a.label, a.id), Btn::Default, a.key, nullptr, 20) + 4 * k();
     float x = q.x + W - bw + 4 * k();
     for (auto& a : acts) {
       ImGui::SetCursorScreenPos(ImVec2(x, q.y + (rh - 20 * k()) / 2));
-      if (button(strip_emoji(a.button.empty() ? a.label : a.button) + "##" + a.id, Btn::Default, 20, a.key)) plugin_action(a.key, p.url);
+      if (button(button_label(a.button, a.label, a.id) + "##" + a.id, Btn::Default, 20, a.key)) plugin_action(a.key, p.url);
+      if (ImGui::IsItemHovered()) tip("%s  %s", strip_emoji(a.label.empty() ? a.id : a.label).c_str(), a.key.c_str());
       x = ImGui::GetItemRectMax().x + 4 * k();
     }
     d->AddCircleFilled(ImVec2(q.x + 3 * k(), q.y + rh / 2), 3 * k(), col(dot));

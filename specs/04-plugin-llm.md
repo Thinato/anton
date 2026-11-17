@@ -22,7 +22,7 @@ pick up a change. Comments are allowed, as in `config.json`.
 {
   "reviewers": [
     {
-      "key": "R", "label": "review with Haiku", "tag": "haiku",
+      "key": "R", "label": "review with Haiku", "button": "Review", "tag": "haiku",
       "model": "haiku",
       "rules": "Be terse. Only flag real bugs.",
       "prompt": "Review $PR_URL. The diff is on stdin. Rules: {rules}",
@@ -39,7 +39,8 @@ pick up a change. Comments are allowed, as in `config.json`.
 | `key` | required | one character; the key in anton. Unique. anton's own keys win a clash (`02-plugins.md`), so pick one anton doesn't use (capitals other than `G` are free) |
 | `command` | required | argv, non-empty, run without a shell. Substitution below; `$HOME`, `${HOME}` and a leading `~` are expanded first, as for plugin commands |
 | `tag` | the key | shown as `🤖 <tag>` in TAGS |
-| `label` | `review with <tag>` | flashed when you press the key, its button's text, listed in `?` |
+| `label` | `review with <tag>` | flashed when you press the key, the button's tooltip, listed in `?` |
+| `button` | none | the button's text, a word or two (`Review`); without it anton-gui shows the label's first word |
 | `stdin` | none | `"diff"`: `gh pr diff <url>` is piped to the command, cut at 200 KB with a `[diff truncated at 200 KB]` line. Without it stdin is `/dev/null` |
 | `timeout` | `600` | seconds, 1–86400 |
 | `cwd` | anton's cwd | working directory, with `$HOME`/`~` expanded. Not used when the PR's repo has a clone (Local clones) |
@@ -283,7 +284,7 @@ JSON with the PR filled in.
   "repos": {"acme/core": "~/src/core"},
   "reviewers": [
     {
-      "key": "H", "tag": "haiku", "label": "Haiku reviews on GitHub", "timeout": 900,
+      "key": "H", "tag": "haiku", "label": "Haiku reviews on GitHub", "button": "Review", "timeout": 900,
       "prompt": "Review {pr_url} and post your review on it.",
       "system": "You review a GitHub pull request and post the review on GitHub yourself.\n\nThe current directory is a checkout of the PR's head: read code there with Read, Grep and Glob. The only commands you can run are `gh pr view {pr_url} ...`, `gh pr diff {pr_url} ...`, `gh api repos/{repo}/pulls/{number}/files` and the post command below. Anything else is refused, so don't look for other ways.\n\n1. Get the diff (`gh pr diff {pr_url}`) and the head commit (`gh pr view {pr_url} --json headRefOid`).\n2. Read the code around the changes where you need context. Only flag real problems: bugs, security holes, missed edge cases, docs that say the wrong thing. No praise, no style nits.\n3. Write the review to {tmp}/review.json:\n   {\"commit_id\": \"<headRefOid>\", \"event\": \"COMMENT\", \"body\": \"<summary>\", \"comments\": [{\"path\": \"src/a.cpp\", \"line\": 42, \"side\": \"RIGHT\", \"body\": \"...\"}]}\n   - \"event\" is always \"COMMENT\". Never approve or request changes.\n   - \"line\" is a line of the new file inside a hunk of the diff; any other line makes GitHub reject the whole review. For several lines add \"start_line\" (same hunk) and \"start_side\": \"RIGHT\".\n   - When you have a concrete fix, end the comment with a ```suggestion block holding the exact new text of those lines, indented as in the file. Otherwise just say what is wrong.\n   - \"body\" is a summary of two or three sentences. If nothing is wrong, post no comments and say so.\n4. Post it with exactly this command: gh api --method POST repos/{repo}/pulls/{number}/reviews --input {tmp}/review.json\n   If GitHub answers 422, fix review.json and post again.\n5. End with a short markdown summary of what you posted: the review's html_url from the response, then one line per comment (path:line and the gist).",
       "settings": {
@@ -325,7 +326,7 @@ reviewer wrote it.
 
 ```json
 {
-  "key": "D", "tag": "draft", "label": "Haiku drafts a review",
+  "key": "D", "tag": "draft", "label": "Haiku drafts a review", "button": "Draft",
   "prompt": "Review {pr_url}. The current directory is a checkout of its head; `gh pr diff {pr_url}` shows the diff. Only flag real problems: bugs, security holes, missed edge cases. Print a draft review: a summary of two or three sentences, then one section per finding headed with `path:line` (a line of the new file inside a hunk of the diff), saying what is wrong, with a ```suggestion block holding the exact new text of those lines when the fix is concrete.",
   "settings": {
     "permissions": {
@@ -343,7 +344,7 @@ reviewer wrote it.
               "--max-turns", "40", "--max-budget-usd", "1", "--no-session-persistence", "{prompt}"]
 },
 {
-  "key": "P", "tag": "posted", "label": "post the draft as a GitHub review", "checkout": "as-is",
+  "key": "P", "tag": "posted", "label": "post the draft as a GitHub review", "button": "Post", "checkout": "as-is",
   "prompt": "Post this draft review of {pr_url} on GitHub as it is, without adding findings of your own.\n\n{note}",
   "system": "You turn a draft review into a GitHub review and post it. The only commands you can run are `gh pr view {pr_url} ...`, `gh pr diff {pr_url} ...` and the post command below.\n\n1. Get the head commit (`gh pr view {pr_url} --json headRefOid`) and the diff (`gh pr diff {pr_url}`).\n2. Write {tmp}/review.json: {\"commit_id\": \"<headRefOid>\", \"event\": \"COMMENT\", \"body\": \"<the draft's summary>\", \"comments\": [{\"path\": \"...\", \"line\": 42, \"side\": \"RIGHT\", \"body\": \"<the finding, with its suggestion block>\"}]}. \"event\" is always \"COMMENT\". \"line\" must be inside a hunk of the diff; a finding you can't place goes into \"body\" instead.\n3. Post it with exactly: gh api --method POST repos/{repo}/pulls/{number}/reviews --input {tmp}/review.json\n   If GitHub answers 422, fix review.json and post again.\n4. End with a short markdown summary: the review's html_url, then one line per comment.",
   "settings": {
@@ -380,7 +381,7 @@ Any other CLI, e.g. [`llm`](https://llm.datasette.io) with DeepSeek:
 Posting a note as a plain comment, no agent involved:
 
 ```json
-{ "key": "C", "tag": "commented", "label": "post the note as a PR comment",
+{ "key": "C", "tag": "commented", "label": "post the note as a PR comment", "button": "Comment",
   "command": ["gh", "pr", "comment", "{pr_url}", "--body", "{note}"] }
 ```
 

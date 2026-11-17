@@ -869,7 +869,7 @@ std::vector<Menu> Gui::menus() {
       for (auto& [pi, a] : keys)
         if (pi == i) {
           std::string url = cur ? cur->url : "";
-          acts.push_back({strip_emoji(a.button.empty() ? a.label : a.button), a.key,
+          acts.push_back({button_label(a.button, a.label, a.id), a.key,
                           [this, key = a.key, url] { plugin_action(key, url); }, cur != nullptr});
         }
       if (!acts.empty()) acts.push_back(sep);

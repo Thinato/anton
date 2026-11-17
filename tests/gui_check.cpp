@@ -76,6 +76,15 @@ int main() {
     assert(seen.size() >= 5);  // spread over the palette, not one colour
   }
 
+  // a plugin's button: its short text, else the label's first word, bounded
+  assert(button_label("Reviewing", "toggle 👀 reviewing in Slack", "review") == "Reviewing");
+  assert(button_label("Toggle 👀", "toggle 👀 reviewing in Slack", "review") == "Toggle");
+  assert(button_label("", "toggle 👀 reviewing in Slack", "review") == "Toggle");
+  assert(button_label("👀", "review with Haiku", "H") == "Review");
+  assert(button_label("", "", "run") == "Run");
+  assert(button_label("", "internationalisation check", "i") == "Internationa…");
+  assert(button_label("", "überprüfen alles", "u") == "überprüfen");  // UTF-8 counted by character
+
   // results off marks: glyph first, level otherwise
   assert(result_of({"f", 3, "error", "!", ""}) == Result::Error);
   assert(result_of({"f", 3, "dim", "◦", ""}) == Result::Queued);

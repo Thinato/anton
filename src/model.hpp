@@ -359,7 +359,8 @@ struct PrInfo {
 };
 
 // A key the plugin handles: anton sends {"action": id, "pr": url} on stdin.
-// button: a short label for its button ("Run specs"); the label otherwise.
+// button: its button's text, a word or two ("Run"); label: the long text,
+// flashed and shown on hover. Without a button anton derives one.
 // line: it also takes "file" and "line" (the reader's ▶ on a test table or row).
 struct Action {
   std::string id, key, label, button;

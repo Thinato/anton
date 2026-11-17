@@ -142,7 +142,7 @@ kinds, since `org:` and `repo:` are in the local subset.
  lucas · opened 30m ago · +331 −61 in 6 files · checks passing · approved       github.com/acme/core/pull/4825
  slack 💬 Ready?
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ⏎ Read   w Browser   y Copy URL   v Toggle 👀   T Run specs                 slack ●  temoc ●   ↻ 40s ago
+  ⏎ Read   w Browser   y Copy URL   v Reviewing   T Run                       slack ●  temoc ●   ↻ 40s ago
  tip click a header to sort · wheel scrolls · double-click reads · right-click a tab for options
 ```
 

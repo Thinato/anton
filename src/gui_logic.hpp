@@ -154,6 +154,25 @@ inline uint32_t name_color(const std::string& login, bool dark) {
   return (dark ? on_dark : on_light)[h % 9];
 }
 
+// A plugin action's button: its short `button` text, emoji dropped; when
+// it sends none (or only emoji), the first word of its `label`,
+// capitalised, at most 12 characters ("toggle 👀 reviewing in Slack" ->
+// "Toggle"); its id at the last. The long label is the button's tooltip.
+inline std::string button_label(const std::string& button, const std::string& label, const std::string& id) {
+  if (std::string b = strip_emoji(button); !b.empty()) return b;
+  std::string l = strip_emoji(label);
+  std::string w = l.substr(0, l.find(' '));
+  if (w.empty()) w = id;
+  size_t n = 0, at = 0;  // 12 characters, not bytes
+  for (; at < w.size() && n < 12; ++n) {
+    unsigned char c = w[at];
+    at += c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : 4;
+  }
+  if (at < w.size()) w = w.substr(0, at) + "…";
+  if (!w.empty() && w[0] >= 'a' && w[0] <= 'z') w[0] = static_cast<char>(w[0] - 'a' + 'A');
+  return w;
+}
+
 // The PR list's row height for a row density.
 inline float row_height(const std::string& density) { return density == "compact" ? 24.f : density == "cozy" ? 28.f : 34.f; }
 

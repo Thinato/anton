@@ -28,6 +28,7 @@ using Fields = std::map<std::string, json>;  // a string or an object
 // One configured key: a command that runs an agent on a PR.
 struct Reviewer {
   std::string key, label, tag;
+  std::string button;      // its button's text, a word or two ("Review"); "" lets anton use the label's first word
   std::string stdin_from;  // "" or "diff"
   std::string cwd;         // "" = the plugin's cwd
   std::string checkout = "pr";  // with a clone in "repos": "pr" (a worktree of the head) or "as-is"
@@ -155,6 +156,7 @@ inline std::string parse_config(const std::string& text, std::vector<Reviewer>& 
     if (r.tag.empty()) r.tag = r.key;
     r.label = str(v, "label");
     if (r.label.empty()) r.label = "review with " + r.tag;
+    r.button = str(v, "button");
     r.stdin_from = str(v, "stdin");
     if (!r.stdin_from.empty() && r.stdin_from != "diff") return where + ": stdin must be \"diff\" or absent";
     r.cwd = expand_home(str(v, "cwd"));

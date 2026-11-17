@@ -26,13 +26,14 @@ int main() {
        "prompt": "Review $PR_URL ({repo} #{number}). Rules: {rules}. Keep {braces} and { \"json\": 1 }.",
        "stdin": "diff", "timeout": 30, "cwd": "~/src",
        "command": ["$HOME/bin/claude", "-p", "--model", "{model}", "{prompt}"]},
-      {"key": "P", "command": ["post", "{note}", "${PR_URL}"]}
+      {"key": "P", "button": "Post", "command": ["post", "{note}", "${PR_URL}"]}
     ]})", rs);
   assert(e.empty());
   assert(rs.size() == 2);
   assert(rs[0].label == "review with haiku" && rs[0].timeout == 30 && rs[0].stdin_from == "diff");
   assert(rs[0].cwd == "/home/octocat/src");
   assert(rs[1].tag == "P" && rs[1].timeout == 600 && rs[1].stdin_from.empty());
+  assert(rs[0].button.empty() && rs[1].button == "Post");  // the button's text, when given
 
   // Substitution: built-ins, fields one level deep, unknowns left alone
   auto a = argv(rs[0], builtins(PR, ""));

@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
     if (!problem.empty()) emit(json({{"health", "error"}, {"text", problem}}).dump(-1, ' ', false, json::error_handler_t::replace));
     else emit(R"({"health":"ok"})");
     if (cfg.key.size() != 1) cfg.key = "T";  // the bad one it read
-    emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}, {"button", "Run specs"}, {"line", true}}}}})
+    emit(json({{"actions", {{{"id", "run"}, {"key", cfg.key}, {"label", "run the PR's temoc specs"}, {"button", "Run"}, {"line", true}}}}})
              .dump(-1, ' ', false, json::error_handler_t::replace));
   }
   std::thread(ticker).detach();
