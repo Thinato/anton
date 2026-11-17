@@ -1210,7 +1210,7 @@ void Gui::dock_spaces() {
   }
   if (place_reader) {
     place_reader = false;
-    pick_tabs = 2;
+    pick_tabs = 8;  // the panes may come a frame or two late
     dock_reader(id);
   }
   ImGui::DockSpace(id, size);

@@ -732,13 +732,17 @@ void Gui::reader_pane() {
 
 // -- the panes around it ----------------------------------------------------------------------
 
+// They come with the reader and mustn't take its focus as they appear (a
+// new window would): the reader's keys, and the tab shown in their node.
+constexpr ImGuiWindowFlags kAround = ImGuiWindowFlags_NoFocusOnAppearing;
+
 // Results, the canvas's way: a 22px line with the document and its counts
 // (Run on the right), then a 24px row per table (on the description, per
 // spec file): its glyph, name, line and result word; a click goes there.
 // Under them what did not pass, the last command and the other actions.
 void Gui::results_pane() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * k(), 6 * k()));
-  bool shown = ImGui::Begin("Results###results", nullptr, ImGuiWindowFlags_NoCollapse);
+  bool shown = ImGui::Begin("Results###results", nullptr, ImGuiWindowFlags_NoCollapse | kAround);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   auto ds = docs();
@@ -1022,7 +1026,7 @@ void Gui::llm_pane() {
 
 void Gui::runlog_pane() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * k(), 6 * k()));
-  bool shown = ImGui::Begin("Run log###runlog", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_HorizontalScrollbar);
+  bool shown = ImGui::Begin("Run log###runlog", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_HorizontalScrollbar | kAround);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   ImGui::PushFont(f.mono, code() * k());
@@ -1070,7 +1074,7 @@ void Gui::problems_pane() {
   }
   std::string title = "Problems  " + std::to_string(ps.size()) + "###problems";
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * k(), 6 * k()));
-  bool shown = ImGui::Begin(title.c_str(), nullptr, ImGuiWindowFlags_NoCollapse);
+  bool shown = ImGui::Begin(title.c_str(), nullptr, ImGuiWindowFlags_NoCollapse | kAround);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   ImGui::PushFont(f.mono, code() * k());
