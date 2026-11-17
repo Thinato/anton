@@ -343,25 +343,27 @@ names. It only runs when you press the key. Details in
 `anton-gui` is the same anton in a window, in GitHub's light and dark
 colors: the views on the left, the PR list with its filter chips, and a
 preview with what each plugin says and its buttons (`Run`). It reads
-the same `config.json` and runs the same plugins.
+the same `config.json` and runs the same plugins. On macOS its menus are
+in the system's menu bar.
 
-![anton-gui: the views, the PR list and a PR's preview, dark](docs/gui.png)
+![anton-gui: the views, the PR list and a PR's preview, dark](docs/gui/list-dark.png)
 
-`Enter` reads a PR: its description and markdown files rendered like
-GitHub, a spec's temoc results on its rows (tinted, marked, what failed
-under the row, each table's result, a `▶` to run a table), and beside it
-the file's results, its tables, what did not pass and the last command,
-with a run log streaming the plugin's progress underneath.
+`Enter` opens a PR in the reader, a tab beside the preview: its
+description and markdown files rendered like GitHub, a spec's temoc
+results on its rows (tinted, marked, what failed under the row, each
+table's result, a `▶` to run a table), and under it the file's results,
+a run log streaming the plugin's progress, and the problems.
 
-![anton-gui's reader on a temoc spec, light](docs/gui-reader.png)
+![anton-gui's reader on a temoc spec, light](docs/gui/reader-light.png)
 
 Every pane docks: drag a tab to move it, a line to resize, out of the
-window to float it; the layout is kept in `~/.config/anton/gui-layout.ini`
-and View › Reset layout puts it back. `Ctrl K` (`Cmd K`) is a command
-palette, `Ctrl ,` the settings (theme, text size, row density, panes,
-views, plugins), saved to `config.json` as you go. The TUI's keys work
-too. Details, the `gui` config keys and `--screenshot` are in
-[specs/06-gui.md](specs/06-gui.md).
+window to float it in a window of its own; the layout is kept in
+`~/.config/anton/gui-layout.ini` and View › Reset Layout puts it back.
+`Cmd K` (`Ctrl K`) is a command palette, `Cmd ,` the settings (theme,
+the list's columns, author and state styles, row height, text sizes,
+where the reader opens, views, plugins), saved to `config.json` as you
+go. The TUI's keys work too. Details, the `gui` config keys and
+`--screenshot` are in [specs/06-gui.md](specs/06-gui.md).
 
 ## Develop
 
@@ -388,6 +390,7 @@ on made-up PRs with a fake `gh`, a fake Slack plugin and a fake temoc (`⏎` the
 not run yet, and `T`, `r` or a `▶` click replays a run phase by phase and
 row by row). `DEMO_TEMOC=badconfig` or `DEMO_TEMOC=crash` before it shows a
 broken temoc.json or a plugin that won't start.
-The screenshots come from it; the desktop app's from
-`ANTON=build/anton-gui ./docs/demo/run.sh --screenshot docs/gui.png --screen list --theme dark --pr 4812`
-(and `--screen reader --theme light --file specs/onboarding.md` for the reader).
+The screenshots come from it; the desktop app's (`docs/gui/`) from
+`ANTON=build/anton-gui ./docs/demo/run.sh --screenshot docs/gui/list-dark.png --screen list --theme dark --pr 4812`
+(`--screen reader|settings|palette`, `--theme light`, `--file specs/onboarding.md` for the reader,
+`--settings-page list`, `--palette-query temoc`).
