@@ -159,8 +159,15 @@ struct Gui : Core {
   // The type scale (06-gui.md): sizes are the canvas's px at its 12px
   // interface size, scaled by k() to the configured one.
   float k() const { return cfg.gui.font_size / 12.f; }
-  float reading() const { return 13; }  // descriptions, specs, notes
-  float code() const { return 11; }     // mono: numbers, paths, logs (key hints one less)
+  float reading() const { return cfg.gui.reading_size / k(); }  // descriptions, specs, notes
+  float code() const { return cfg.gui.code_size / k(); }        // mono: numbers, paths, logs (key hints one less)
+  // A hover tip, unless gui.tooltips is off.
+  template <class... A>
+  void tip(const char* fmt, A... a) {
+    if (!cfg.gui.tooltips) return;
+    if constexpr (sizeof...(a) > 0) ImGui::SetTooltip(fmt, a...);
+    else ImGui::SetTooltip("%s", fmt);
+  }
 
   // -- the PR list (gui_list.cpp) ---------------------------------------------------
   std::vector<Pr> cur_rows;  // the active view's rows this frame
@@ -215,6 +222,8 @@ struct Gui : Core {
   void text_wrapped(const std::string& s, uint32_t color, ImFont* font = nullptr, float size = 0, float wrap = 0);
   void pill(const std::string& s, Tone tn, float h = 18, const char* glyph = nullptr, bool dot = true);
   void state_text(const Pill& pl, uint32_t text_color = 0, float h = 16);  // ● Review required; 0: the tone's color
+  void state_cell(const Pill& pl, float h);  // in gui.state_style
+  float author_cell(const std::string& login, float width, float h, float fs = 12);  // in gui.author_style
   void avatar(const std::string& login, float size = 14);
   void diffstat_blocks(long add, long del, float h = 0);  // h: the line to center on (0: the text's)
   using Icon = void (*)(ImDrawList*, ImVec2, float, ImU32);
@@ -223,7 +232,7 @@ struct Gui : Core {
   float button_width(const std::string& label, Btn kind = Btn::Default, const std::string& key = "", Icon icon = nullptr,
                      float h = 24);
   bool icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size = 24,
-                   bool bordered = true, const char* tip = nullptr);
+                   bool bordered = true, const char* hint = nullptr);
   void section(const std::string& title);  // 22px: an 11px semibold muted label, a line under it
   bool link_row(const std::string& id, float h);  // a full-width hover row; true on click
   void segments(const std::vector<std::pair<std::string, uint32_t>>& parts, ImFont* font = nullptr, float size = 0);

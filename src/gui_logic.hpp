@@ -141,6 +141,19 @@ inline std::string strip_emoji(const std::string& s) {
   return a == std::string::npos ? "" : out.substr(a, b - a + 1);
 }
 
+// A person's name colour (gui.author_style "color"): the canvas's NAMES
+// palette for the theme, picked by a stable hash of the login (FNV-1a,
+// any case), so a name keeps its colour across runs and in both themes.
+inline uint32_t name_color(const std::string& login, bool dark) {
+  static const uint32_t on_dark[] = {0xbc8cffffu, 0xe3b341ffu, 0xd2a8ffffu, 0xff7b72ffu, 0xf0883effu,
+                                     0xa5d6ffffu, 0x56d364ffu, 0xffa657ffu, 0x79c0ffffu};
+  static const uint32_t on_light[] = {0x8250dfffu, 0x9a6700ffu, 0x6639baffu, 0xcf222effu, 0xbc4c00ffu,
+                                      0x0550aeffu, 0x1a7f37ffu, 0x953800ffu, 0x0969daffu};
+  uint32_t h = 2166136261u;
+  for (unsigned char c : lower(login)) h = (h ^ c) * 16777619u;
+  return (dark ? on_dark : on_light)[h % 9];
+}
+
 // The PR list's row height for a row density.
 inline float row_height(const std::string& density) { return density == "compact" ? 24.f : density == "cozy" ? 28.f : 34.f; }
 

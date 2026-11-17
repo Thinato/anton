@@ -68,6 +68,9 @@ inline std::string merged_config(const std::string& existing, const Config& c, s
     };
     sub(gui, "theme", g.theme, g.theme == dg.theme);
     sub(gui, "font_size", g.font_size, g.font_size == dg.font_size);
+    sub(gui, "reading_size", g.reading_size, g.reading_size == dg.reading_size);
+    sub(gui, "code_size", g.code_size, g.code_size == dg.code_size);
+    sub(gui, "tooltips", g.tooltips, g.tooltips == dg.tooltips);
     sub(gui, "code_font", g.code_font, g.code_font == dg.code_font);
     sub(gui, "density", g.density, g.density == dg.density);
     sub(gui, "author_style", g.author_style, g.author_style == dg.author_style);

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 
 #include "config_write.hpp"
@@ -63,7 +64,17 @@ int main() {
   // emoji the fonts can't draw go; symbols stay
   assert(strip_emoji("👀 paz") == "paz" && strip_emoji("⚙ queued") == "⚙ queued" && strip_emoji("✓ 14") == "✓ 14");
   assert(strip_emoji("❤️ x") == "❤ x" && strip_emoji("🧪") == "" && strip_emoji("toggle 👀 reviewing") == "toggle reviewing");
-  assert(row_height("compact") < row_height("comfortable"));
+  assert(row_height("compact") == 24 && row_height("cozy") == 28 && row_height("roomy") == 34);
+
+  // names in colour: the canvas's palette, by a stable hash of the login
+  assert(name_color("ren", true) == name_color("REN", true));   // any case
+  assert(name_color("ren", true) != name_color("ren", false));  // the theme's palette
+  assert(name_color("ren", true) == 0xe3b341ffu && name_color("ren", false) == 0x9a6700ffu);  // FNV-1a % 9 = 1, in both
+  {
+    std::set<uint32_t> seen;
+    for (auto who : {"ren", "lucas", "chidi", "anika", "dana", "yuri", "ines", "mona", "paz"}) seen.insert(name_color(who, true));
+    assert(seen.size() >= 5);  // spread over the palette, not one colour
+  }
 
   // results off marks: glyph first, level otherwise
   assert(result_of({"f", 3, "error", "!", ""}) == Result::Error);
@@ -132,7 +143,7 @@ int main() {
     Config c;
     assert(parse_config(R"({"gui": {"theme": "light", "font_size": 40, "density": "compact",
                                     "panes": {"preview": false}}})", c).empty());
-    assert(c.gui.theme == "light" && c.gui.font_size == 18 && c.gui.density == "compact" && !c.gui.preview && c.gui.views);
+    assert(c.gui.theme == "light" && c.gui.font_size == 20 && c.gui.density == "compact" && !c.gui.preview && c.gui.views);
     // a bad gui value doesn't stop the TUI: it's reported, and the gui keys default
     Config bad;
     assert(parse_config(R"({"gui": {"theme": "blue", "density": "compact"}, "refresh_seconds": 60})", bad).empty());
@@ -141,6 +152,49 @@ int main() {
     assert(parse_config(R"({"gui": {"font_size": "14"}})", bad2).empty() && bad2.gui_error.starts_with("gui: "));
     Config bad3;
     assert(parse_config(R"({"gui": {"code_font": "Comic"}})", bad3).empty() && !bad3.gui_error.empty());
+
+    // the canvas's defaults: no size blocks, avatars, dots, compact rows
+    GuiPrefs def;
+    assert(def.font_size == 12 && def.reading_size == 13 && def.code_size == 11);
+    assert(def.author_style == "avatar" && def.state_style == "dot" && def.density == "compact");
+    assert(def.reader_placement == "beside_preview" && def.tooltips && def.results);
+    assert(!def.shows("blocks") && def.shows("number") && def.shows("tags") && !def.shows("title"));
+    assert(def.columns.size() == kGuiColumns.size() && def.columns[0].name == "number");
+
+    // every new key, parsed
+    Config all;
+    assert(parse_config(R"({"gui": {"columns": ["author", {"name": "repo", "hidden": true}, "blocks", "title"],
+                                    "author_style": "color", "state_style": "pill", "density": "cozy",
+                                    "font_size": 14, "reading_size": 15, "code_size": 4, "tooltips": false,
+                                    "reader_placement": "window", "panes": {"results": false}}})", all).empty());
+    assert(all.gui_error.empty());
+    const GuiPrefs& g = all.gui;
+    assert(g.author_style == "color" && g.state_style == "pill" && g.density == "cozy");
+    assert(g.font_size == 14 && g.reading_size == 15 && g.code_size == 9 && !g.tooltips);
+    assert(g.reader_placement == "window" && !g.results && g.preview);
+    // the order given; the title skipped; the columns left out follow, hidden
+    assert(g.columns.size() == kGuiColumns.size());
+    assert(g.columns[0].name == "author" && g.columns[0].shown);
+    assert(g.columns[1].name == "repo" && !g.columns[1].shown);
+    assert(g.columns[2].name == "blocks" && g.columns[2].shown);
+    assert(g.columns[3].name == "number" && !g.columns[3].shown && !g.shows("labels"));
+
+    // an old config: "comfortable" is roomy now, and nothing else moves
+    Config old;
+    assert(parse_config(R"({"gui": {"theme": "dark", "font_size": 13, "density": "comfortable"}})", old).empty());
+    assert(old.gui_error.empty() && old.gui.density == "roomy" && old.gui.font_size == 13);
+    assert(old.gui.columns == GuiPrefs{}.columns && old.gui.author_style == "avatar");
+
+    // bad values say which key
+    for (auto [json, want] : {std::pair{R"({"gui": {"author_style": "big"}})", "gui.author_style"},
+                              {R"({"gui": {"state_style": "icon"}})", "gui.state_style"},
+                              {R"({"gui": {"density": "tight"}})", "gui.density"},
+                              {R"({"gui": {"reader_placement": "left"}})", "gui.reader_placement"},
+                              {R"({"gui": {"columns": ["number", "colour"]}})", "gui.columns"},
+                              {R"({"gui": {"columns": "number"}})", "gui.columns"}}) {
+      Config b;
+      assert(parse_config(json, b).empty() && b.gui_error.starts_with(want) && b.gui == GuiPrefs{});
+    }
 
     std::string err;
     Config d;
@@ -155,6 +209,26 @@ int main() {
     assert(parse_config(out, back).empty() && back.gui == d.gui);  // the round trip
     d.gui.theme = "system";  // back to the default: kept, since the file has it now
     assert(merged_config(out, d, err).find("\"theme\": \"system\"") != std::string::npos);
+
+    // the new keys round-trip, and keys anton doesn't know stay
+    std::string file = R"({"mine": {"keep": [1, 2]}, "gui": {"later": "a key from a newer anton", "panes": {"dock": 3}}})";
+    Config e;
+    assert(parse_config(file, e).empty());
+    e.gui = all.gui;
+    std::string text = merged_config(file, e, err);
+    assert(err.empty());
+    Config back2;
+    assert(parse_config(text, back2).empty() && back2.gui == all.gui);
+    auto j = nlohmann::json::parse(text);
+    assert(j["mine"]["keep"] == nlohmann::json({1, 2}));
+    assert(j["gui"]["later"] == "a key from a newer anton" && j["gui"]["panes"]["dock"] == 3);
+    assert(j["gui"]["columns"][0] == "author" && j["gui"]["columns"][1] == nlohmann::json({{"name", "repo"}, {"hidden", true}}));
+    assert(j["gui"]["panes"]["results"] == false && j["gui"]["tooltips"] == false);
+    // at the defaults, an old file is written back as it was
+    Config f;
+    std::string plain = R"({"gui": {"theme": "dark"}})";
+    assert(parse_config(plain, f).empty());
+    assert(nlohmann::json::parse(merged_config(plain, f, err)) == nlohmann::json::parse(plain));
   }
 
   // the layout lives in the config dir, never the cwd

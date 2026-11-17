@@ -30,7 +30,7 @@ const char* kUsage =
     "usage: anton-gui [--query '<github search>'] [--no-plugins] [--version]\n"
     "                 [--screenshot out.png --screen list|reader|settings|palette\n"
     "                  [--theme dark|light] [--pr N] [--file F] [--size WxH] [--scale S]\n"
-    "                  [--palette-query Q] [--settings-page general|appearance|views|plugins]\n"
+    "                  [--palette-query Q] [--settings-page general|appearance|list|views|plugins]\n"
     "                  [--press KEY [--wait SECONDS]] [--keys 'j j <Enter> J r']]\n"
     "\n"
     "  --query Q       open a single ad-hoc view instead of the configured ones\n"
@@ -400,8 +400,8 @@ int main(int argc, char** argv) {
           if (pick) g->open_reader(*pick);
         } else if (shot.screen == "settings") {
           g->settings_open = true;
-          const char* pages[] = {"general", "appearance", "views", "plugins"};
-          for (int i = 0; i < 4; ++i)
+          const char* pages[] = {"general", "appearance", "list", "views", "plugins"};
+          for (int i = 0; i < 5; ++i)
             if (shot.settings_page == pages[i]) g->settings_page = i;
         }
         if (shot.screen == "palette") {

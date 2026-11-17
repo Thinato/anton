@@ -101,7 +101,8 @@ struct GuiColumn {
 // ignores them; config_write keeps them either way.
 struct GuiPrefs {
   std::string theme = "system";              // dark | light | system (the OS appearance)
-  int font_size = 12;                        // the interface size, 11-18 px
+  int font_size = 12;                        // text sizes, 9-20 px: the interface (everything scales with it),
+  int reading_size = 13, code_size = 11;     // descriptions and specs, mono numbers/paths/logs
   std::string code_font = "JetBrains Mono";  // or "System monospace"
   std::string density = "compact";           // compact | cozy | roomy: the PR list's rows, 24 | 28 | 34
   std::vector<GuiColumn> columns = [] {      // every kGuiColumns name once, in the order shown
@@ -112,6 +113,7 @@ struct GuiPrefs {
   std::string author_style = "avatar";  // avatar | color: a circle, or the name in a colour
   std::string state_style = "dot";      // dot | text | pill
   std::string reader_placement = "beside_preview";  // beside_preview | last | window: where Open in reader puts it
+  bool tooltips = true;                 // hover tips, the actions' long labels among them
   bool views = true, preview = true, results = true, run_log = true, status_bar = true;  // panes shown
   bool shows(const std::string& column) const {
     for (auto& c : columns)
@@ -169,7 +171,10 @@ inline std::string parse_gui(const nlohmann::json& g, GuiPrefs& p) {
     if (!g.is_object()) return "gui: want an object";
     p.theme = g.value("theme", p.theme);
     if (p.theme != "dark" && p.theme != "light" && p.theme != "system") return "gui.theme: dark, light or system";
-    p.font_size = std::clamp(g.value("font_size", p.font_size), 11, 18);
+    p.font_size = std::clamp(g.value("font_size", p.font_size), 9, 20);
+    p.reading_size = std::clamp(g.value("reading_size", p.reading_size), 9, 20);
+    p.code_size = std::clamp(g.value("code_size", p.code_size), 9, 20);
+    p.tooltips = g.value("tooltips", p.tooltips);
     p.code_font = g.value("code_font", p.code_font);
     if (p.code_font != "JetBrains Mono" && p.code_font != "System monospace")
       return "gui.code_font: \"JetBrains Mono\" or \"System monospace\"";

@@ -368,7 +368,7 @@ void Gui::markdown(const std::string& md_text, const std::string& path, bool spe
               run_line(path, b.test);
             }
             bool hov = ImGui::IsItemHovered();
-            if (hov) ImGui::SetTooltip("Run this table (r)");
+            if (hov) tip("Run this table (r)");
             d->AddRectFilled(p, p + ImVec2(bh, bh), col(hov ? (t.dark ? t.border_muted : t.inset) : t.btn), 4 * k());
             d->AddRect(p, p + ImVec2(bh, bh), col(focused ? t.accent : t.border), 4 * k(), focused ? 2.f : 1.f);
             icon_play(d, ImVec2(p.x + 5 * k(), p.y + 5 * k()), 8 * k(), col(t.success));
@@ -461,7 +461,7 @@ void Gui::markdown(const std::string& md_text, const std::string& path, bool spe
             ImGui::SetCursorScreenPos(ImVec2(o.x - gutter, y + (rh - 16 * k()) / 2));
             ImGui::PushID(r.src);
             if (ImGui::InvisibleButton("##runrow", ImVec2(16 * k(), 16 * k()))) run_line(path, r.src);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run this row");
+            if (ImGui::IsItemHovered()) tip("Run this row");
             ImGui::PopID();
             icon_play(d, ImVec2(o.x - gutter + 3 * k(), y + (rh - 9 * k()) / 2), 9 * k(), col(t.success));
           } else if (rmarks) {
@@ -639,7 +639,7 @@ void Gui::reader_tabs(const std::vector<Doc>& ds) {
     ImGui::PushID(static_cast<int>(i));
     if (ImGui::InvisibleButton("##tab", ImVec2(w, H))) reader_tab = i;
     bool hov = ImGui::IsItemHovered();
-    if (hov && !doc.path.empty()) ImGui::SetTooltip("%s", doc.path.c_str());
+    if (hov && !doc.path.empty()) tip("%s", doc.path.c_str());
     ImGui::PopID();
     if (!mark.empty()) cd->AddText(f.semibold, fs, ImVec2(p.x, p.y + (H - ms.y) / 2), col(mc), mark.c_str());
     cd->AddText(nf, fs, ImVec2(p.x + mw, p.y + (H - ns.y) / 2), col(on || hov ? t.fg : t.muted), doc.name.c_str());
@@ -784,7 +784,7 @@ void Gui::results_pane() {
       ImGui::RenderTextEllipsis(d, ImVec2(x + nw + 8 * k(), p.y + (rh - mfs) / 2), ImVec2(r, p.y + rh), r, note.c_str(), nullptr, nullptr);
       ImGui::PopStyleColor();
       ImGui::PopFont();
-      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", note.c_str());
+      if (ImGui::IsItemHovered()) tip("%s", note.c_str());
     }
     return clicked;
   };

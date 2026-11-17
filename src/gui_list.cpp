@@ -174,7 +174,7 @@ void Gui::views_pane() {
       view_menu(i);
       ImGui::EndPopup();
     }
-    if (hov && tabs[i].saved) ImGui::SetTooltip("%s", tabs[i].v.query.c_str());
+    if (hov && tabs[i].saved) tip("%s", tabs[i].v.query.c_str());
     if (i == active) d->AddRectFilled(p, p + ImVec2(w, h), col(t.sel), 6 * k());
     else if (hov) d->AddRectFilled(p, p + ImVec2(w, h), col(hover), 6 * k());
     // the count on the right (mono, muted), then the plugin, then the name
@@ -233,7 +233,8 @@ void Gui::views_pane() {
     }
     if (ImGui::IsItemHovered()) {
       d->AddRectFilled(q, q + ImVec2(w, h), col(hover), 6 * k());
-      ImGui::SetTooltip(on ? "Show every repository" : "Only %s, in every view (x clears)", repo.c_str());
+      if (on) tip("Show every repository");
+      else tip("Only %s, in every view (x clears)", repo.c_str());
     }
     if (on) d->AddRectFilled(q, q + ImVec2(w, h), col(t.sel), 6 * k());
     d->AddCircleFilled(ImVec2(q.x + 12 * k(), q.y + h / 2), 4 * k(), col(repo_dot(t, n++)));
@@ -638,7 +639,7 @@ void Gui::pr_table() {
       ImGui::PushID(static_cast<int>(i));
       if (ImGui::InvisibleButton("##h", ImVec2(std::max(ts.x, 12 * k()), ts.y))) set_sort(*key);
       hov = ImGui::IsItemHovered();
-      if (hov) ImGui::SetTooltip("Sort by %s", sort_label(*key).c_str());
+      if (hov) tip("Sort by %s", sort_label(*key).c_str());
       ImGui::PopID();
     } else {
       ImGui::Dummy(ts);
@@ -716,7 +717,7 @@ void Gui::pr_cells(const Pr& p, const std::vector<std::string>& cols, float y0, 
       diffstat_blocks(p.additions, p.deletions, rh / k());
     } else if (c == "state") {
       cell_y(18 * k());
-      state_text(state_pill(derive_state(p, status_of(p.url))), t.fg2, 18);
+      state_cell(state_pill(derive_state(p, status_of(p.url))), 18);
     } else if (c == "age") {
       if (!p.created) continue;
       std::string a = age(now() - p.created);
@@ -726,17 +727,8 @@ void Gui::pr_cells(const Pr& p, const std::vector<std::string>& cols, float y0, 
       text(a, t.muted, nullptr, 11);
     } else if (c == "author") {
       if (p.author.empty()) continue;
-      cell_y(14 * k());
-      avatar(p.author);
-      ImGui::SameLine(0, 6 * k());
-      cell_y(fs);
-      ImVec2 at = ImGui::GetCursorScreenPos();
-      float right = at.x + ImGui::GetContentRegionAvail().x;
-      std::string name = who(p.author);
-      ImGui::PushStyleColor(ImGuiCol_Text, col(t.fg2));
-      ImGui::RenderTextEllipsis(d, at, ImVec2(right, at.y + fs), right, name.c_str(), nullptr, nullptr);
-      ImGui::PopStyleColor();
-      ImGui::Dummy(ImVec2(right - at.x, fs));
+      cell_y(rh);
+      author_cell(p.author, ImGui::GetContentRegionAvail().x, rh / k());
     } else if (c == "title") {
       cell_y(fs);
       float avail = ImGui::GetContentRegionAvail().x - 10 * k();
@@ -885,7 +877,7 @@ void Gui::plugins_box(const Pr& p) {
     ImGui::PopFont();
     ImGui::SetCursorScreenPos(ImVec2(lx, q.y));
     ImGui::InvisibleButton("##line", ImVec2(std::max(1.f, lr - lx), rh));
-    if (ImGui::IsItemHovered() && !full.empty()) {
+    if (ImGui::IsItemHovered() && !full.empty() && cfg.gui.tooltips) {
       ImGui::SetNextWindowSize(ImVec2(360 * k(), 0));
       ImGui::BeginTooltip();
       text_wrapped(strip_emoji(full), t.fg, nullptr, 11);
@@ -918,10 +910,8 @@ void Gui::meta_line(const Pr& p, const std::vector<std::pair<std::string, uint32
   put(f.regular, strip_emoji(pl.text), tone_fg(pl.tone));
   x += 8 * k();
   if (!p.author.empty()) {
-    ImGui::SetCursorScreenPos(ImVec2(x, o.y + 1 * k()));
-    avatar(p.author);
-    x += 19 * k();
-    put(f.medium, who(p.author), t.fg2);
+    ImGui::SetCursorScreenPos(ImVec2(x, o.y));
+    x += author_cell(p.author, 0, 16, 11);
     put(f.regular, " · " + age(now() - p.created) + " ago", t.muted);
     x += 8 * k();
   }

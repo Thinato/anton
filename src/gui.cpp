@@ -389,6 +389,49 @@ void Gui::state_text(const Pill& pl, uint32_t text_color, float h) {
   ImGui::Dummy(ImVec2(11 * k() + ts.x, H));
 }
 
+// A PR's state as gui.state_style says: a dot and the label (dot), the
+// label in the state's colour (text), or a pill (pill). h: the line, px.
+void Gui::state_cell(const Pill& pl, float h) {
+  if (cfg.gui.state_style == "pill") {
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (h - 18) * k() / 2);
+    pill(strip_emoji(pl.text), pl.tone);
+  } else if (cfg.gui.state_style == "text") {
+    std::string s = strip_emoji(pl.text);
+    ImVec2 ts = f.regular->CalcTextSizeA(11 * k(), FLT_MAX, 0, s.c_str());
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddText(f.regular, 11 * k(), ImVec2(p.x, p.y + (h * k() - ts.y) / 2), col(tone_fg(pl.tone)), s.c_str());
+    ImGui::Dummy(ImVec2(ts.x, h * k()));
+  } else {
+    state_text(pl, t.fg2, h);
+  }
+}
+
+// An author as gui.author_style says: the avatar and the name (avatar), or
+// the name alone in weight 500 and the person's colour (color), clipped to
+// width; h: the line, px. Returns the width drawn.
+float Gui::author_cell(const std::string& login, float width, float h, float fs) {
+  ImDrawList* d = ImGui::GetWindowDrawList();
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  float H = h * k(), x = p.x, F = fs * k();
+  bool color = cfg.gui.author_style == "color";
+  if (!color) {
+    ImGui::SetCursorScreenPos(ImVec2(x, p.y + (H - 14 * k()) / 2));
+    avatar(login);
+    x += 20 * k();
+  }
+  std::string name = who(login);
+  ImFont* fnt = color ? f.medium : f.regular;
+  float right = width > 0 ? p.x + width : x + fnt->CalcTextSizeA(F, FLT_MAX, 0, name.c_str()).x + 1;  // +1: no ellipsis on a rounding
+  ImGui::PushFont(fnt, F);
+  ImGui::PushStyleColor(ImGuiCol_Text, col(color ? name_color(login, t.dark) : t.fg2));
+  ImGui::RenderTextEllipsis(d, ImVec2(x, p.y + (H - F) / 2), ImVec2(right, p.y + H), right, name.c_str(), nullptr, nullptr);
+  ImGui::PopStyleColor();
+  ImGui::PopFont();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(right - p.x, H));
+  return right - p.x;
+}
+
 // A person's avatar: their first letter on their configured color.
 void Gui::avatar(const std::string& login, float size) {
   const Person* p = person(login);
@@ -467,7 +510,7 @@ bool Gui::button(const std::string& label, Btn kind, float h, const std::string&
 }
 
 bool Gui::icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size, bool bordered,
-                      const char* tip) {
+                      const char* hint) {
   float S = size * k();
   ImVec2 p = ImGui::GetCursorScreenPos();
   bool clicked = ImGui::InvisibleButton(id, ImVec2(S, S));
@@ -479,7 +522,7 @@ bool Gui::icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, I
   float is = S / 2;
   g_icon_bg = col(bg ? bg : t.panel);
   icon(d, ImVec2(p.x + (S - is) / 2, p.y + (S - is) / 2), is, col(t.muted));
-  if (tip && hov) ImGui::SetTooltip("%s", tip);
+  if (hint && hov) tip(hint);
   return clicked;
 }
 
@@ -674,7 +717,7 @@ const Pr* Gui::current_pr() const {
 void Gui::quit() { glfwSetWindowShouldClose(window, 1); }
 
 void Gui::zoom(int by) {
-  int to = by ? std::clamp(cfg.gui.font_size + by, 11, 18) : GuiPrefs{}.font_size;
+  int to = by ? std::clamp(cfg.gui.font_size + by, 9, 20) : GuiPrefs{}.font_size;
   if (to == cfg.gui.font_size) return;
   cfg.gui.font_size = to;
   save();
@@ -756,7 +799,10 @@ std::vector<Menu> Gui::menus() {
     for (auto& c : g.columns)
       if (c.name == "labels" || c.name == "tags") cols.push_back({c.name == "labels" ? "Labels" : "Plugin tags", "", flag(&c.shown), true, c.shown});
     cols.push_back(sep);
-    cols.push_back({"Customize…", "Mod+,", [this] { settings_open = true; }});
+    cols.push_back({"Customize…", "Mod+,", [this] {
+                      settings_open = true;
+                      settings_page = 2;
+                    }});
     std::vector<Cmd> rows, states, themes;
     for (auto [id, name] : {std::pair{"compact", "Compact 24"}, {"cozy", "Cozy 28"}, {"roomy", "Roomy 34"}})
       rows.push_back({name, "", pick(&g.density, id), true, g.density == id});
@@ -780,8 +826,8 @@ std::vector<Menu> Gui::menus() {
                   {"State style", "", nullptr, true, -1, states},
                   sep,
                   {"Theme", "", nullptr, true, -1, themes},
-                  {"Zoom In", "Mod++", [this] { zoom(1); }, g.font_size < 18},
-                  {"Zoom Out", "Mod+-", [this] { zoom(-1); }, g.font_size > 11},
+                  {"Zoom In", "Mod++", [this] { zoom(1); }, g.font_size < 20},
+                  {"Zoom Out", "Mod+-", [this] { zoom(-1); }, g.font_size > 9},
                   {"Actual Size", "Mod+0", [this] { zoom(0); }},
                   sep,
                   {"Reset Layout", "", [this] { reset_layout = true; }},
@@ -836,7 +882,7 @@ std::vector<Menu> Gui::menus() {
     pl.push_back(sep);
     pl.push_back({"Plugin Settings…", "", [this] {
                     settings_open = true;
-                    settings_page = 3;
+                    settings_page = 4;
                   }});
     m.push_back({"Plugins", pl});
   }
