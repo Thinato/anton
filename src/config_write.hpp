@@ -70,9 +70,15 @@ inline std::string merged_config(const std::string& existing, const Config& c, s
     sub(gui, "font_size", g.font_size, g.font_size == dg.font_size);
     sub(gui, "code_font", g.code_font, g.code_font == dg.code_font);
     sub(gui, "density", g.density, g.density == dg.density);
+    sub(gui, "author_style", g.author_style, g.author_style == dg.author_style);
+    sub(gui, "state_style", g.state_style, g.state_style == dg.state_style);
+    oj cols = oj::array();
+    for (auto& c : g.columns) cols.push_back(c.shown ? oj(c.name) : oj{{"name", c.name}, {"hidden", true}});
+    sub(gui, "columns", cols, g.columns == dg.columns);
     oj panes = gui.contains("panes") && gui["panes"].is_object() ? gui["panes"] : oj::object();
     sub(panes, "views", g.views, g.views == dg.views);
     sub(panes, "preview", g.preview, g.preview == dg.preview);
+    sub(panes, "results", g.results, g.results == dg.results);
     sub(panes, "run_log", g.run_log, g.run_log == dg.run_log);
     sub(panes, "status_bar", g.status_bar, g.status_bar == dg.status_bar);
     if (!panes.empty()) gui["panes"] = panes;

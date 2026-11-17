@@ -235,6 +235,9 @@ int main(int argc, char** argv) {
   if (shooting && !shot.theme.empty()) cfg.gui.theme = shot.theme;
 
   glfwSetErrorCallback([](int e, const char* d) { std::fprintf(stderr, "anton-gui: glfw error %d: %s\n", e, d); });
+#ifdef __APPLE__
+  glfwInitHint(GLFW_COCOA_MENUBAR, GLFW_FALSE);  // ours replaces GLFW's (gui_menu_mac.mm)
+#endif
   if (!glfwInit()) {
     std::fprintf(stderr, "anton-gui: can't open a window (no display?)\n");
     return 1;
@@ -294,6 +297,9 @@ int main(int argc, char** argv) {
   ImFont* sysmono = system_mono();
   g->f.mono = jetbrains;
   g->apply_theme();
+#ifdef __APPLE__
+  if (!shooting) mac_install_menu(g);
+#endif
 
   for (int sig : {SIGTERM, SIGHUP, SIGINT}) {
     struct sigaction sa {};
@@ -427,11 +433,16 @@ int main(int argc, char** argv) {
         if (++frame % 4 == 0) {
           std::string key = shot.keys.front();
           shot.keys.erase(shot.keys.begin());
+#ifdef __APPLE__
+          const ImGuiKey mod = ImGuiMod_Super;  // Cmd, as the GLFW backend sends it
+#else
+          const ImGuiKey mod = ImGuiMod_Ctrl;
+#endif
           auto tap = [&](ImGuiKey k, bool ctrl = false) {
-            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+            if (ctrl) io.AddKeyEvent(mod, true);
             io.AddKeyEvent(k, true);
             io.AddKeyEvent(k, false);
-            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, false);
+            if (ctrl) io.AddKeyEvent(mod, false);
           };
           if (key == "<Enter>") tap(ImGuiKey_Enter);
           else if (key == "<Esc>") tap(ImGuiKey_Escape);

@@ -172,6 +172,11 @@ if(ANTON_GUI)
     src/gui_main.cpp src/gui.cpp src/gui_list.cpp src/gui_reader.cpp src/gui_settings.cpp
     src/core.cpp src/markdown.cpp src/proc.cpp src/github.cpp src/plugins.cpp src/update.cpp
     ${CMAKE_BINARY_DIR}/gui_fonts.cpp)
+  if(APPLE)  # the native menu bar: Objective-C++, compiled as C++ so GLFW's languages stay as they are
+    target_sources(anton-gui PRIVATE src/gui_menu_mac.mm)
+    set_source_files_properties(src/gui_menu_mac.mm PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-xobjective-c++;-fobjc-arc")
+    target_link_libraries(anton-gui PRIVATE "-framework Cocoa")
+  endif()
   target_include_directories(anton-gui PRIVATE src)
   target_include_directories(anton-gui SYSTEM PRIVATE ${stb_image_write_SOURCE_DIR})
   target_link_libraries(anton-gui PRIVATE nlohmann_json::nlohmann_json imgui md4c ftxui::screen)

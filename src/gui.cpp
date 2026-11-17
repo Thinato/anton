@@ -2,8 +2,10 @@
 // keys, theme; and the drawing helpers the panes share. See gui.hpp.
 #include "gui.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <set>
 #include <thread>
@@ -638,7 +640,10 @@ void Gui::frame() {
   if (screen == Screen::Reader && !cache.count(reader_url)) screen = Screen::List;
 
   ImGui::PushFont(f.regular, 0.f);
+#ifndef __APPLE__
   menu_bar();
+#endif
+  toolbar();
   if (cfg.gui.status_bar) status_bar();
   dock_spaces();
   if (settings_open) settings_window();
@@ -649,165 +654,351 @@ void Gui::frame() {
   ImGui::PopFont();
 }
 
-void Gui::menu_bar() {
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8 * k(), 10 * k()));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2 * k(), 6 * k()));
-  ImGui::PushStyleColor(ImGuiCol_Border, col(t.border));
-  if (!ImGui::BeginMainMenuBar()) {
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
+const Pr* Gui::current_pr() const {
+  if (screen == Screen::Reader && cache.count(reader_url)) return &cache.at(reader_url);
+  return selected_pr();
+}
+
+void Gui::quit() { glfwSetWindowShouldClose(window, 1); }
+
+void Gui::zoom(int by) {
+  int to = by ? std::clamp(cfg.gui.font_size + by, 11, 18) : GuiPrefs{}.font_size;
+  if (to == cfg.gui.font_size) return;
+  cfg.gui.font_size = to;
+  save();
+}
+
+// Mod held unless it already is: a menu click has no key down, a shortcut does.
+void Gui::send_key(int key) {
+  ImGuiIO& io = ImGui::GetIO();
+  bool held = io.KeyCtrl;  // ImGui's Ctrl is Cmd on macOS
+#ifdef __APPLE__
+  ImGuiKey mod = ImGuiMod_Super;  // what the GLFW backend sends for Cmd; ImGui swaps it
+#else
+  ImGuiKey mod = ImGuiMod_Ctrl;
+#endif
+  if (!held) io.AddKeyEvent(mod, true);
+  io.AddKeyEvent(static_cast<ImGuiKey>(key), true);
+  io.AddKeyEvent(static_cast<ImGuiKey>(key), false);
+  if (!held) io.AddKeyEvent(mod, false);
+}
+
+std::vector<Menu> Gui::menus() {
+  const Pr* cur = current_pr();
+  bool typing = ImGui::GetIO().WantTextInput, reading = screen == Screen::Reader;
+  Cmd sep;
+  auto flag = [this](bool* v) { return [this, v] { *v = !*v; save(); }; };
+  auto pick = [this](std::string* v, std::string to) { return [this, v, to] { *v = to; save(); }; };
+  std::vector<Menu> m;
+#ifdef __APPLE__
+  m.push_back({"anton",
+               {{"About anton", "", [] { mac_about(); }},
+                sep,
+                {"Settings…", "Mod+,", [this] { settings_open = true; }},
+                sep,
+                {"Hide anton", "Mod+H", [] { mac_hide(); }},
+                sep,
+                {"Quit anton", "Mod+Q", [this] { quit(); }}}});
+#endif
+  {
+    std::vector<Cmd> file;
+#ifndef __APPLE__
+    file.push_back({"Settings…", "Mod+,", [this] { settings_open = true; }});
+#endif
+    file.push_back({"Open config.json", "", [this] { open_config(); }});
+    file.push_back(sep);
+    file.push_back({"Close Reader", "Mod+W", [this] { screen = Screen::List; }, reading});
+#ifndef __APPLE__
+    file.push_back(sep);
+    file.push_back({"Quit", "Mod+Q", [this] { quit(); }});
+#endif
+    m.push_back({"File", file});
+  }
+  m.push_back({"Edit",
+               {{"Cut", "Mod+X", [this] { send_key(ImGuiKey_X); }, typing, -1, {}, true},
+                {"Copy", "Mod+C", [this, typing] { typing ? send_key(ImGuiKey_C) : act("y"); }, typing || cur, -1, {}, true},
+                {"Paste", "Mod+V", [this] { send_key(ImGuiKey_V); }, typing, -1, {}, true},
+                {"Select All", "Mod+A", [this] { send_key(ImGuiKey_A); }, typing, -1, {}, true},
+                sep,
+                {"Copy URL", "Y", [this] { act("y"); }, cur != nullptr},
+                {"Edit the Query", "/", [this] { act("/"); }},
+                {"Clear org/repo", "X", [this] { act("x"); }, !scope.empty()},
+                sep,
+                {"Command Palette", "Mod+K", [this] {
+                   palette_open = !palette_open;
+                   palette_focus = palette_open;
+                   palette_q.clear();
+                   palette_sel = 0;
+                 }}}});
+  {
+    GuiPrefs& g = cfg.gui;
+    std::vector<Cmd> cols;
+    static const std::pair<const char*, const char*> names[] = {
+        {"number", "Number"}, {"repo", "Repo"}, {"size", "Size (+/−)"}, {"blocks", "Size blocks"}, {"state", "State"},
+        {"age", "Age"},       {"author", "Author"}};
+    for (auto [id, name] : names)
+      for (auto& c : g.columns)
+        if (c.name == id) cols.push_back({name, "", flag(&c.shown), true, c.shown});
+    cols.push_back({"Avatars", "", [this] { cfg.gui.author_style = cfg.gui.author_style == "avatar" ? "color" : "avatar"; save(); },
+                    true, g.author_style == "avatar"});
+    for (auto& c : g.columns)
+      if (c.name == "labels" || c.name == "tags") cols.push_back({c.name == "labels" ? "Labels" : "Plugin tags", "", flag(&c.shown), true, c.shown});
+    cols.push_back(sep);
+    cols.push_back({"Customize…", "Mod+,", [this] { settings_open = true; }});
+    std::vector<Cmd> rows, states, themes;
+    for (auto [id, name] : {std::pair{"compact", "Compact 24"}, {"cozy", "Cozy 28"}, {"roomy", "Roomy 34"}})
+      rows.push_back({name, "", pick(&g.density, id), true, g.density == id});
+    for (auto [id, name] : {std::pair{"dot", "Circle and label"}, {"text", "Coloured text"}, {"pill", "Pill"}})
+      states.push_back({name, "", pick(&g.state_style, id), true, g.state_style == id});
+    for (auto [id, name] : {std::pair{"dark", "Dark"}, {"light", "Light"}, {"system", "Match System"}})
+      themes.push_back({name, "", [this, id = std::string(id)] { set_theme(id); }, true, g.theme == id});
+#ifdef __APPLE__
+    bool full = mac_fullscreen(window);
+#else
+    bool full = glfwGetWindowMonitor(window) != nullptr;
+#endif
+    m.push_back({"View",
+                 {{"Views", "Mod+1", flag(&g.views), true, g.views},
+                  {"Preview", "Mod+2", flag(&g.preview), true, g.preview},
+                  {"Results", "Shift+Mod+R", flag(&g.results), true, g.results},
+                  {"Run log", "Mod+J", flag(&g.run_log), true, g.run_log},
+                  sep,
+                  {"Columns", "", nullptr, true, -1, cols},
+                  {"Row height", "", nullptr, true, -1, rows},
+                  {"State style", "", nullptr, true, -1, states},
+                  sep,
+                  {"Theme", "", nullptr, true, -1, themes},
+                  {"Zoom In", "Mod++", [this] { zoom(1); }, g.font_size < 18},
+                  {"Zoom Out", "Mod+-", [this] { zoom(-1); }, g.font_size > 11},
+                  {"Actual Size", "Mod+0", [this] { zoom(0); }},
+                  sep,
+                  {"Reset Layout", "", [this] { reset_main = reset_reader = true; }},
+#ifdef __APPLE__
+                  {full ? "Exit Full Screen" : "Enter Full Screen", "Ctrl+Mod+F", [this] { mac_toggle_fullscreen(window); }}}});
+#else
+                  {full ? "Exit Full Screen" : "Enter Full Screen", "F11", [this] { toggle_fullscreen(); }}}});
+#endif
+  }
+  {
+    std::vector<Cmd> prs = {{"Open in Reader", "Enter", [this] { act("⏎"); }, cur != nullptr && !reading},
+                            {"Open on GitHub", "W", [this] { act("w"); }, cur != nullptr},
+                            {"Copy URL", "Y", [this] { act("y"); }, cur != nullptr},
+                            sep,
+                            {"Refresh", "R", [this] { refresh(); }}};
+    std::vector<Cmd> sorts;
+    for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo}) {
+      if (s == Sort::List && !view().is_list()) continue;
+      sorts.push_back({sort_label(s), "", [this, s] { set_sort(s); }, true,
+                       view().sort_or_default() == s});
+    }
+    prs.push_back({"Sort", "", nullptr, true, -1, sorts});
+    prs.push_back(sep);
+    for (size_t i = 0; i < tabs.size(); ++i)
+      prs.push_back({tabs[i].v.name, i < 9 ? std::to_string(i + 1) : "", [this, i] {
+                       screen = Screen::List;
+                       switch_view(i);
+                     },
+                     true, i == active});
+    prs.push_back({"New View", "+", [this] { act("+"); }});
+    m.push_back({"Pull requests", prs});
+  }
+  {
+    std::vector<Cmd> pl;
+    if (cfg.plugins.empty()) pl.push_back({"No plugins configured", "", nullptr, false});
+    auto keys = plugin_keys();
+    for (size_t i = 0; i < cfg.plugins.size(); ++i) {
+      std::vector<Cmd> acts;
+      for (auto& [pi, a] : keys)
+        if (pi == i) {
+          std::string url = cur ? cur->url : "";
+          acts.push_back({strip_emoji(a.button.empty() ? a.label : a.button), a.key,
+                          [this, key = a.key, url] { plugin_action(key, url); }, cur != nullptr});
+        }
+      if (!acts.empty()) acts.push_back(sep);
+      acts.push_back({"Restart", "", [this, i] {
+                        if (plugins) plugins->restart(i);
+                        flash("restarting " + cfg.plugins[i].name);
+                      }});
+      pl.push_back({cfg.plugins[i].name, "", nullptr, true, -1, acts});
+    }
+    pl.push_back(sep);
+    pl.push_back({"Plugin Settings…", "", [this] {
+                    settings_open = true;
+                    settings_page = 3;
+                  }});
+    m.push_back({"Plugins", pl});
+  }
+  m.push_back({"Window",
+               {{"Minimize", "Mod+M", [this] { glfwIconifyWindow(window); }},
+                {"Zoom", "", [this] {
+                   if (glfwGetWindowAttrib(window, GLFW_MAXIMIZED)) glfwRestoreWindow(window);
+                   else glfwMaximizeWindow(window);
+                 }},
+                sep,
+                {"Status bar", "", flag(&cfg.gui.status_bar), true, cfg.gui.status_bar}}});
+  m.push_back({"Help",
+               {{"Search or Run a Command", "", [this] { palette_open = palette_focus = true; }},
+                {"anton on GitHub", "", [this] { open_file("https://github.com/Thinato/anton"); }},
+                sep,
+                {std::string("anton-gui ") + kVersion, "", nullptr, false}}});
+  return m;
+}
+
+#ifndef __APPLE__
+// F11: the monitor the window is mostly on, at its mode; again, back where it was.
+void Gui::toggle_fullscreen() {
+  static int x, y, w, h;
+  if (GLFWmonitor* on = glfwGetWindowMonitor(window)) {
+    (void)on;
+    glfwSetWindowMonitor(window, nullptr, x, y, w, h, 0);
     return;
   }
-  ImGui::PopStyleVar(2);
-  ImDrawList* d = ImGui::GetWindowDrawList();
-  float H = ImGui::GetWindowHeight();
-  ImVec2 wp = ImGui::GetWindowPos();
-  d->AddLine(ImVec2(wp.x, wp.y + H - 1), ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + H - 1), col(t.border));
-  // the logo and the name
-  ImGui::SetCursorPosX(12 * k());
-  ImVec2 p = ImGui::GetCursorScreenPos();
-  icon_logo(d, ImVec2(p.x, wp.y + (H - 18 * k()) / 2), 18 * k(), col(t.accent));
-  ImGui::SetCursorPosX(12 * k() + 26 * k());
-  ImGui::PushFont(f.semibold, 14 * k());
-  ImGui::TextUnformatted("anton");
-  ImGui::PopFont();
-  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10 * k());
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 8 * k()));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * k(), 6 * k()));
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8 * k(), 4 * k()));
-  const Pr* cur = screen == Screen::Reader && cache.count(reader_url) ? &cache.at(reader_url) : selected_pr();
-  if (ImGui::BeginMenu("File")) {
-    if (ImGui::MenuItem("Settings…", "Ctrl ,")) settings_open = true;
-    if (ImGui::MenuItem("Open config.json")) open_config();
-    ImGui::Separator();
-    if (ImGui::MenuItem("Quit", "Ctrl Q")) glfwSetWindowShouldClose(window, 1);
-    ImGui::EndMenu();
+  glfwGetWindowPos(window, &x, &y);
+  glfwGetWindowSize(window, &w, &h);
+  GLFWmonitor* best = glfwGetPrimaryMonitor();
+  int count = 0, most = -1;
+  GLFWmonitor** ms = glfwGetMonitors(&count);
+  for (int i = 0; i < count; ++i) {
+    int mx, my;
+    const GLFWvidmode* md = glfwGetVideoMode(ms[i]);
+    glfwGetMonitorPos(ms[i], &mx, &my);
+    int ow = std::max(0, std::min(x + w, mx + md->width) - std::max(x, mx));
+    int oh = std::max(0, std::min(y + h, my + md->height) - std::max(y, my));
+    if (ow * oh > most) most = ow * oh, best = ms[i];
   }
-  if (ImGui::BeginMenu("Edit")) {
-    if (ImGui::MenuItem("Copy URL", "y", false, cur)) act("y");
-    if (ImGui::MenuItem("Edit the query", "/")) act("/");
-    if (ImGui::MenuItem("Clear org/repo", "x", false, !scope.empty())) act("x");
-    ImGui::Separator();
-    if (ImGui::MenuItem("Command palette", "Ctrl K")) palette_open = palette_focus = true;
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu("View")) {
-    if (ImGui::MenuItem("Pull requests", nullptr, screen == Screen::List)) screen = Screen::List;
-    if (ImGui::MenuItem("Reader", "Enter", screen == Screen::Reader, cur != nullptr) && cur) open_reader(*cur);
-    ImGui::Separator();
-    if (ImGui::BeginMenu("Panes")) {
-      bool changed = ImGui::MenuItem("Views", nullptr, &cfg.gui.views);
-      changed |= ImGui::MenuItem("Preview", nullptr, &cfg.gui.preview);
-      changed |= ImGui::MenuItem("Run log (in the reader)", nullptr, &cfg.gui.run_log);
-      changed |= ImGui::MenuItem("Status bar", nullptr, &cfg.gui.status_bar);
-      if (changed) save();
-      ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Theme")) {
-      for (auto [id, name] : {std::pair{"dark", "Dark"}, {"light", "Light"}, {"system", "Match system"}})
-        if (ImGui::MenuItem(name, nullptr, cfg.gui.theme == id)) set_theme(id);
-      ImGui::EndMenu();
-    }
-    if (ImGui::MenuItem("Bigger text", "Ctrl +", false, cfg.gui.font_size < 18)) {
-      ++cfg.gui.font_size;
-      save();
-    }
-    if (ImGui::MenuItem("Smaller text", "Ctrl -", false, cfg.gui.font_size > 11)) {
-      --cfg.gui.font_size;
-      save();
-    }
-    ImGui::Separator();
-    if (ImGui::MenuItem("Reset layout")) reset_main = reset_reader = true;
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu("Pull requests")) {
-    if (ImGui::MenuItem("Open in reader", "Enter", false, cur) && cur) open_reader(*cur);
-    if (ImGui::MenuItem("Open on GitHub", "w", false, cur)) act("w");
-    if (ImGui::MenuItem("Copy URL", "y", false, cur)) act("y");
-    ImGui::Separator();
-    if (ImGui::MenuItem("Refresh", "r")) refresh();
-    if (ImGui::BeginMenu("Sort")) {
-      for (Sort s : {Sort::List, Sort::Updated, Sort::Created, Sort::Size, Sort::Repo}) {
-        if (s == Sort::List && !view().is_list()) continue;
-        if (ImGui::MenuItem(s == Sort::List ? "list order" : sort_name(s), nullptr, view().sort_or_default() == s)) set_sort(s);
+  if (!best) return;
+  const GLFWvidmode* md = glfwGetVideoMode(best);
+  glfwSetWindowMonitor(window, best, 0, 0, md->width, md->height, md->refreshRate);
+}
+#endif
+
+// "Mod+K" as the platform writes it: Ctrl+K here (the NSMenus draw their own).
+static std::string key_text(const std::string& key) {
+  std::string s = key;
+  if (size_t at = s.find("Mod+"); at != std::string::npos) s.replace(at, 4, "Ctrl+");
+  return s;
+}
+
+// A key with Mod in it (or an F key) pressed this frame, exactly those modifiers held.
+static bool chord_pressed(const std::string& key) {
+  std::string k = key;
+  int mods = 0;
+  bool shift_free = false;
+#ifdef __APPLE__
+  const int ctrl = ImGuiMod_Super;  // the real Ctrl: ImGui swaps it with Cmd
+#else
+  const int ctrl = ImGuiMod_Ctrl;
+#endif
+  for (bool more = true; more;) {
+    more = false;
+    for (auto [prefix, mod] : {std::pair{"Shift+", int(ImGuiMod_Shift)}, {"Ctrl+", ctrl}, {"Mod+", int(ImGuiMod_Ctrl)}})
+      if (k.size() > std::strlen(prefix) && k.starts_with(prefix)) {
+        mods |= mod;
+        k = k.substr(std::strlen(prefix));
+        more = true;
       }
-      ImGui::EndMenu();
-    }
-    ImGui::Separator();
-    for (size_t i = 0; i < tabs.size(); ++i) {
-      std::string key = i < 9 ? std::to_string(i + 1) : "";
-      if (ImGui::MenuItem(tabs[i].v.name.c_str(), key.c_str(), i == active)) switch_view(i);
-    }
-    if (ImGui::MenuItem("New view", "+")) act("+");
-    ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Plugins")) {
-    if (cfg.plugins.empty()) ImGui::MenuItem("No plugins configured", nullptr, false, false);
-    for (size_t i = 0; i < cfg.plugins.size(); ++i) {
-      if (ImGui::BeginMenu(cfg.plugins[i].name.c_str())) {
-        for (auto& [pi, a] : plugin_keys())
-          if (pi == i && ImGui::MenuItem(strip_emoji(a.button.empty() ? a.label : a.button).c_str(), a.key.c_str(), false, cur) && cur)
-            plugin_action(a.key, cur->url);
-        if (ImGui::MenuItem("Restart") && plugins) plugins->restart(i);
+  std::vector<ImGuiKey> keys;
+  if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') keys = {static_cast<ImGuiKey>(ImGuiKey_A + (k[0] - 'A'))};
+  else if (k.size() == 1 && k[0] >= '0' && k[0] <= '9') keys = {static_cast<ImGuiKey>(ImGuiKey_0 + (k[0] - '0'))};
+  else if (k == ",") keys = {ImGuiKey_Comma};
+  else if (k == "+") keys = {ImGuiKey_Equal, ImGuiKey_KeypadAdd}, shift_free = true;  // ⌘= and ⌘+ both
+  else if (k == "-") keys = {ImGuiKey_Minus, ImGuiKey_KeypadSubtract};
+  else if (k == "F11") keys = {ImGuiKey_F11};
+  if (keys.empty() || (!mods && k != "F11")) return false;
+  int held = ImGui::GetIO().KeyMods & (ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiMod_Alt | ImGuiMod_Super);
+  if (shift_free) held &= ~ImGuiMod_Shift;
+  if (held != mods) return false;
+  return std::any_of(keys.begin(), keys.end(), [](ImGuiKey x) { return ImGui::IsKeyPressed(x, false); });
+}
+
+// The menus as ImGui draws them: Linux's menu bar (macOS has the system's).
+static void draw_items(const std::vector<Cmd>& items) {
+  for (auto& c : items) {
+    if (c.label.empty()) ImGui::Separator();
+    else if (!c.run && !c.sub.empty()) {
+      if (ImGui::BeginMenu(c.label.c_str(), c.enabled)) {
+        draw_items(c.sub);
         ImGui::EndMenu();
       }
+    } else if (ImGui::MenuItem(c.label.c_str(), c.key.empty() ? nullptr : key_text(c.key).c_str(), c.check == 1,
+                               c.enabled && c.run) &&
+               c.run) {
+      c.run();
     }
-    ImGui::Separator();
-    if (ImGui::MenuItem("Plugin settings…")) {
-      settings_open = true;
-      settings_page = 3;
-    }
-    ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Help")) {
-    if (ImGui::MenuItem("Command palette", "Ctrl K")) palette_open = palette_focus = true;
-    if (ImGui::MenuItem("anton on GitHub")) open_file("https://github.com/Thinato/anton");
-    ImGui::Separator();
-    ImGui::MenuItem((std::string("anton-gui ") + kVersion).c_str(), nullptr, false, false);
-    ImGui::EndMenu();
+}
+
+void Gui::menu_bar() {
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8 * k(), 4 * k()));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8 * k(), 6 * k()));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * k(), 6 * k()));
+  if (ImGui::BeginMainMenuBar()) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImVec2 wp = ImGui::GetWindowPos();
+    float H = ImGui::GetWindowHeight();
+    d->AddLine(ImVec2(wp.x, wp.y + H - 1), ImVec2(wp.x + ImGui::GetWindowWidth(), wp.y + H - 1), col(t.border));
+    for (auto& mn : menus())
+      if (ImGui::BeginMenu(mn.title.c_str())) {
+        draw_items(mn.items);
+        ImGui::EndMenu();
+      }
+    ImGui::EndMainMenuBar();
   }
   ImGui::PopStyleVar(3);
+}
 
-  // the search box, centered; then the refresh status and the theme button
-  float W = ImGui::GetWindowWidth(), sw = 300 * k(), sh = 26 * k();
-  float sx = std::max(ImGui::GetCursorPosX() + 16 * k(), (W - sw) / 2);
-  ImGui::SetCursorPos(ImVec2(sx, (H - sh) / 2));
+// Under the menus: the logo, the search box that opens the palette, the
+// refresh state and the theme button.
+void Gui::toolbar() {
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  float H = 38 * k();
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, col(t.panel));
+  ImGuiWindowFlags fl = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav;
+  bool shown = ImGui::BeginViewportSideBar("##toolbar", vp, ImGuiDir_Up, H, fl);
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(2);
+  if (!shown) return ImGui::End();
+  ImDrawList* d = ImGui::GetWindowDrawList();
+  ImVec2 wp = ImGui::GetWindowPos();
+  float W = ImGui::GetWindowWidth();
+  d->AddLine(ImVec2(wp.x, wp.y + H - 1), ImVec2(wp.x + W, wp.y + H - 1), col(t.border));
+  icon_logo(d, ImVec2(wp.x + 12 * k(), wp.y + (H - 16 * k()) / 2), 16 * k(), col(t.accent));
+  d->AddText(f.semibold, ImGui::GetFontSize(), ImVec2(wp.x + 36 * k(), wp.y + (H - ImGui::GetFontSize()) / 2), col(t.fg), "anton");
+  // the search box, centered
+  float sw = 380 * k(), sh = 24 * k();
+  ImGui::SetCursorPos(ImVec2(std::max(90 * k(), (W - sw) / 2), (H - sh) / 2));
   ImVec2 sp = ImGui::GetCursorScreenPos();
   if (ImGui::InvisibleButton("##search", ImVec2(sw, sh))) palette_open = palette_focus = true;
   bool hov = ImGui::IsItemHovered();
   d->AddRectFilled(sp, sp + ImVec2(sw, sh), col(t.bg), 6 * k());
   d->AddRect(sp, sp + ImVec2(sw, sh), col(hov ? t.muted : t.border), 6 * k());
-  icon_search(d, ImVec2(sp.x + 8 * k(), sp.y + (sh - 14 * k()) / 2), 14 * k(), col(t.muted));
-  float ty = sp.y + (sh - ImGui::GetTextLineHeight()) / 2;
-  d->AddText(ImVec2(sp.x + 30 * k(), ty), col(t.muted), "Search or run a command");
-  {
-    ImGui::PushFont(f.mono, 11 * k());
-    const char* kb = "Ctrl K";
-    ImVec2 ks = ImGui::CalcTextSize(kb);
-    ImVec2 kp(sp.x + sw - ks.x - 18 * k(), sp.y + (sh - 16 * k()) / 2);
-    d->AddRect(kp, kp + ImVec2(ks.x + 10 * k(), 16 * k()), col(t.border), 4 * k());
-    d->AddText(ImVec2(kp.x + 5 * k(), kp.y + (16 * k() - ks.y) / 2), col(t.muted), kb);
-    ImGui::PopFont();
-  }
+  icon_search(d, ImVec2(sp.x + 8 * k(), sp.y + (sh - 12 * k()) / 2), 12 * k(), col(t.muted));
+  d->AddText(ImVec2(sp.x + 28 * k(), sp.y + (sh - ImGui::GetFontSize()) / 2), col(t.muted), "Search or run a command");
+#ifdef __APPLE__
+  const char* kb = "⌘K";
+#else
+  const char* kb = "Ctrl K";
+#endif
+  ImVec2 ks = f.mono->CalcTextSizeA(10 * k(), FLT_MAX, 0, kb);
+  d->AddText(f.mono, 10 * k(), ImVec2(sp.x + sw - 8 * k() - ks.x, sp.y + (sh - ks.y) / 2), col(t.muted), kb);
+  // the refresh state, the refresh and theme buttons
   std::string status = loading() ? "Refreshing…" : last_fetch ? "Refreshed " + age(now() - last_fetch) + " ago" : "Loading…";
   if (status == "Refreshed 0m ago") status = "Refreshed just now";
-  ImVec2 st = ImGui::CalcTextSize(status.c_str());
-  float bw = 28 * k(), rw = st.x + 16 * k() + 22 * k();
-  ImGui::SetCursorPos(ImVec2(W - 8 * k() - bw - 6 * k() - rw, (H - 26 * k()) / 2));
-  ImVec2 rp = ImGui::GetCursorScreenPos();
-  if (ImGui::InvisibleButton("##refresh", ImVec2(rw, 26 * k()))) refresh();
-  if (ImGui::IsItemHovered()) {
-    d->AddRectFilled(rp, rp + ImVec2(rw, 26 * k()), col(t.dark ? t.border_muted : t.inset), 6 * k());
-    ImGui::SetTooltip("Refresh now (r) · every %ds", cfg.refresh_seconds);
-  }
-  icon_refresh(d, ImVec2(rp.x + 8 * k(), rp.y + 6 * k()), 14 * k(), col(t.muted));
-  d->AddText(ImVec2(rp.x + 28 * k(), rp.y + (26 * k() - st.y) / 2), col(t.muted), status.c_str());
-  ImGui::SetCursorPos(ImVec2(W - 8 * k() - bw, (H - bw) / 2));
+  float bw = 24 * k(), x = W - 12 * k() - bw;
+  ImGui::SetCursorPos(ImVec2(x, (H - bw) / 2));
   bool dark = t.dark;
-  if (icon_button("##theme", dark ? icon_sun : icon_moon, 28, true, dark ? "Switch to light mode" : "Switch to dark mode"))
+  if (icon_button("##theme", dark ? icon_sun : icon_moon, 24, true, dark ? "Switch to light mode" : "Switch to dark mode"))
     set_theme(dark ? "light" : "dark");
-  ImGui::EndMainMenuBar();
-  ImGui::PopStyleColor();
+  x -= 4 * k() + bw;
+  ImGui::SetCursorPos(ImVec2(x, (H - bw) / 2));
+  std::string tip = "Refresh now (r) · every " + std::to_string(cfg.refresh_seconds) + "s";
+  if (icon_button("##refresh", icon_refresh, 24, false, tip.c_str())) refresh();
+  ImVec2 st = f.regular->CalcTextSizeA(11 * k(), FLT_MAX, 0, status.c_str());
+  d->AddText(f.regular, 11 * k(), ImVec2(wp.x + x - 8 * k() - st.x, wp.y + (H - st.y) / 2), col(t.muted), status.c_str());
+  ImGui::End();
 }
 
 void Gui::status_bar() {
@@ -967,28 +1158,26 @@ void Gui::dock_spaces() {
 
 // -- keys ---------------------------------------------------------------------------------
 
+// A menu entry's shortcut runs it, on every platform: on macOS the menu
+// bar takes those keys first, so they get here only while it's not there
+// (--screenshot) or the entry is disabled, and then nothing runs twice.
+static const Cmd* shortcut(const std::vector<Cmd>& items) {
+  for (auto& c : items) {
+    if (!c.sub.empty())
+      if (const Cmd* s = shortcut(c.sub)) return s;
+    if (c.run && c.enabled && !c.passthrough && !c.key.empty() && chord_pressed(c.key)) return &c;
+  }
+  return nullptr;
+}
+
 void Gui::keys() {
   ImGuiIO& io = ImGui::GetIO();
   bool mod = io.KeyCtrl || io.KeySuper;
-  if (mod && ImGui::IsKeyPressed(ImGuiKey_K, false)) {
-    palette_open = !palette_open;
-    palette_focus = palette_open;
-    palette_q.clear();
-    palette_sel = 0;
-    return;
-  }
-  if (mod && ImGui::IsKeyPressed(ImGuiKey_Comma, false)) settings_open = true;
-  if (mod && ImGui::IsKeyPressed(ImGuiKey_Q, false)) glfwSetWindowShouldClose(window, 1);
-  if (mod && (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) &&
-      cfg.gui.font_size < 18) {
-    ++cfg.gui.font_size;
-    save();
-  }
-  if (mod && (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) &&
-      cfg.gui.font_size > 11) {
-    --cfg.gui.font_size;
-    save();
-  }
+  for (auto& mn : menus())
+    if (const Cmd* c = shortcut(mn.items)) {
+      c->run();
+      return;
+    }
   if (palette_open || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return;
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
     if (settings_open) settings_open = false;

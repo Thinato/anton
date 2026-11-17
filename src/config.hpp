@@ -86,14 +86,37 @@ struct Column {
 
 inline const std::vector<std::string> kColumns = {"repo", "number", "size", "state", "age", "author", "tags", "title"};
 
+// The GUI's PR list columns, in their default order. The title is always
+// shown, last; labels and tags go after it.
+inline const std::vector<std::string> kGuiColumns = {"number", "repo", "size", "blocks", "state",
+                                                     "age",    "author", "labels", "tags"};
+
+struct GuiColumn {
+  std::string name;
+  bool shown = true;
+  bool operator==(const GuiColumn&) const = default;
+};
+
 // anton-gui's own settings ("gui" in config.json, 06-gui.md). The TUI
 // ignores them; config_write keeps them either way.
 struct GuiPrefs {
   std::string theme = "system";              // dark | light | system (the OS appearance)
   int font_size = 13;                        // the interface size, 11-18 px
   std::string code_font = "JetBrains Mono";  // or "System monospace"
-  std::string density = "comfortable";       // compact | comfortable: the PR list's rows
-  bool views = true, preview = true, run_log = true, status_bar = true;  // panes shown
+  std::string density = "compact";           // compact | cozy | roomy: the PR list's rows, 24 | 28 | 34
+  std::vector<GuiColumn> columns = [] {      // every kGuiColumns name once, in the order shown
+    std::vector<GuiColumn> v;
+    for (auto& n : kGuiColumns) v.push_back({n, n != "blocks"});
+    return v;
+  }();
+  std::string author_style = "avatar";  // avatar | color: a circle, or the name in a colour
+  std::string state_style = "dot";      // dot | text | pill
+  bool views = true, preview = true, results = true, run_log = true, status_bar = true;  // panes shown
+  bool shows(const std::string& column) const {
+    for (auto& c : columns)
+      if (c.name == column) return c.shown;
+    return false;
+  }
   bool operator==(const GuiPrefs&) const = default;
 };
 
@@ -150,11 +173,34 @@ inline std::string parse_gui(const nlohmann::json& g, GuiPrefs& p) {
     if (p.code_font != "JetBrains Mono" && p.code_font != "System monospace")
       return "gui.code_font: \"JetBrains Mono\" or \"System monospace\"";
     p.density = g.value("density", p.density);
-    if (p.density != "compact" && p.density != "comfortable") return "gui.density: compact or comfortable";
+    if (p.density == "comfortable") p.density = "roomy";  // the old name for the tallest rows
+    if (p.density != "compact" && p.density != "cozy" && p.density != "roomy")
+      return "gui.density: compact, cozy or roomy";
+    p.author_style = g.value("author_style", p.author_style);
+    if (p.author_style != "avatar" && p.author_style != "color") return "gui.author_style: avatar or color";
+    p.state_style = g.value("state_style", p.state_style);
+    if (p.state_style != "dot" && p.state_style != "text" && p.state_style != "pill")
+      return "gui.state_style: dot, text or pill";
+    if (g.contains("columns")) {  // "repo" shown, {"name": "blocks", "hidden": true} not; the rest after, hidden
+      if (!g.at("columns").is_array()) return "gui.columns: want a list";
+      std::vector<GuiColumn> cols;
+      for (auto& v : g.at("columns")) {
+        GuiColumn c{v.is_string() ? v.get<std::string>() : v.value("name", std::string()), true};
+        if (v.is_object()) c.shown = !v.value("hidden", false);
+        if (c.name == "title") continue;
+        if (std::find(kGuiColumns.begin(), kGuiColumns.end(), c.name) == kGuiColumns.end())
+          return "gui.columns: no column \"" + c.name + "\" (" + join(kGuiColumns) + ")";
+        if (std::none_of(cols.begin(), cols.end(), [&](const GuiColumn& x) { return x.name == c.name; })) cols.push_back(c);
+      }
+      for (auto& n : kGuiColumns)
+        if (std::none_of(cols.begin(), cols.end(), [&](const GuiColumn& x) { return x.name == n; })) cols.push_back({n, false});
+      p.columns = cols;
+    }
     if (g.contains("panes")) {
       const nlohmann::json& ps = g.at("panes");
       p.views = ps.value("views", p.views);
       p.preview = ps.value("preview", p.preview);
+      p.results = ps.value("results", p.results);
       p.run_log = ps.value("run_log", p.run_log);
       p.status_bar = ps.value("status_bar", p.status_bar);
     }

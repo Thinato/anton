@@ -142,7 +142,7 @@ inline std::string strip_emoji(const std::string& s) {
 }
 
 // The PR list's row height for a row density.
-inline float row_height(const std::string& density) { return density == "compact" ? 28.f : 38.f; }
+inline float row_height(const std::string& density) { return density == "compact" ? 24.f : density == "cozy" ? 28.f : 34.f; }
 
 // -- temoc results, read off marks -------------------------------------------------
 

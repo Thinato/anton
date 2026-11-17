@@ -1,8 +1,10 @@
 #pragma once
 // anton-gui (06-gui.md): the desktop UI, Dear ImGui on GLFW and OpenGL 3.
 // Gui derives from Core, the logic it shares with the TUI, and draws it:
-//   gui.cpp           the frame: menu bar, dock spaces and their default
-//                     layout, the status bar, keys, theme, drawing helpers
+//   gui.cpp           the frame: the menus (one table for both menu bars),
+//                     the toolbar, dock spaces and their default layout,
+//                     the status bar, keys, theme, drawing helpers
+//   gui_menu_mac.mm   the macOS menu bar, NSMenus built from that table
 //   gui_list.cpp      the PR list's panes: Views, Pull requests, Preview
 //   gui_reader.cpp    the reader: a PR's documents with temoc results,
 //                     Results, Outline, LLM review, Run log, Problems
@@ -35,6 +37,24 @@ struct Fonts {
 
 enum class Screen { List, Reader };
 enum class Btn { Default, Primary, Ghost };
+
+// One entry of the menus. The macOS menu bar (gui_menu_mac.mm) and the
+// in-window one (Linux) are both built from Gui::menus(), and keys() runs
+// an entry whose key has Mod in it: one code path per command.
+struct Cmd {
+  std::string label = "";     // "" = a separator
+  std::string key;            // "Mod+K", "Shift+Mod+R", "Ctrl+Mod+F" (Mod: Cmd on macOS, Ctrl elsewhere),
+                              // "F11"; or a plain key, only shown: "H", "Enter"
+  std::function<void()> run = nullptr;  // none: a submenu (sub)
+  bool enabled = true;
+  int check = -1;             // -1: no check mark; 0 or 1
+  std::vector<Cmd> sub = {};
+  bool passthrough = false;   // its key is ImGui's own (Cut, Copy, ...): keys() leaves it be
+};
+struct Menu {
+  std::string title;
+  std::vector<Cmd> items;
+};
 
 // One of the reader's documents: the description (path "") or a file.
 struct Doc {
@@ -107,7 +127,16 @@ struct Gui : Core {
   // -- frame ---------------------------------------------------------------------------
   void frame();  // the whole UI, between ImGui::NewFrame and Render
   void apply_theme();
-  void menu_bar();
+  std::vector<Menu> menus();  // the menu bar's menus, as things are now
+  void menu_bar();            // the in-window one (not on macOS)
+  void toolbar();
+  void quit();
+#ifndef __APPLE__
+  void toggle_fullscreen();  // F11
+#endif
+  void zoom(int by);          // the interface size; 0: back to the default
+  void send_key(int key);     // an ImGuiKey with Mod held, to ImGui (Edit's Cut, Copy, Paste, Select All)
+  const Pr* current_pr() const;  // the reader's PR while it has the focus, else the list's
   void status_bar();
   void dock_spaces();
   void build_main_layout(ImGuiID id, ImVec2 size);
@@ -207,5 +236,15 @@ bool input(const char* id, std::string& s, ImGuiInputTextFlags flags = 0, const 
 
 std::string tilde(const std::string& path);
 std::string short_repo(const std::string& repo);
+std::string sort_label(Sort s);  // "Recently updated"
+
+#ifdef __APPLE__
+// gui_menu_mac.mm
+void mac_install_menu(Gui* g);  // the menu bar, from g->menus()
+void mac_about();
+void mac_hide();
+void mac_toggle_fullscreen(GLFWwindow* w);
+bool mac_fullscreen(GLFWwindow* w);
+#endif
 
 }  // namespace anton::gui

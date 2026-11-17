@@ -284,7 +284,7 @@ void Gui::modals() {
 
 // -- the filter bar ------------------------------------------------------------------
 
-static std::string sort_label(Sort s) {
+std::string sort_label(Sort s) {
   switch (s) {
     case Sort::List: return "List order";
     case Sort::Updated: return "Recently updated";
