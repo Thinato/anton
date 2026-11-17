@@ -880,7 +880,7 @@ void Gui::palette() {
 #else
   const char* settings_key = "Ctrl ,";
 #endif
-  items.push_back({g, "⚙", "Open settings", "General, Appearance, Views, Plugins", settings_key, t.muted, [this] { settings_open = true; }});
+  items.push_back({g, "⚙", "Open settings", "General, Appearance, PR list, Views, Plugins", settings_key, t.muted, [this] { settings_open = true; }});
   for (auto [id, name] : {std::pair{"dark", "Dark"}, {"light", "Light"}, {"system", "Match system"}})
     items.push_back({g, "⚙", std::string("Theme: ") + name, cfg.gui.theme == id ? "current" : "", "", t.muted,
                      [this, id = std::string(id)] { set_theme(id); }});
@@ -888,7 +888,7 @@ void Gui::palette() {
     if (mn.title == "View")
       for (auto& c : mn.items)
         if (c.run && c.check >= 0)
-          items.push_back({g, "⚙", (c.check ? "Hide the " : "Show the ") + c.label + " pane", "View › Panes", "", t.muted, c.run});
+          items.push_back({g, "⚙", (c.check ? "Hide the " : "Show the ") + c.label + " pane", "View", "", t.muted, c.run});
   items.push_back({g, "⚙", "Reset layout", "the panes as they first were", "", t.muted, [this] { reset_layout = true; }});
   items.push_back({g, "⚙", "Open config.json", tilde(config_path()), "", t.muted, [this] { open_config(); }});
   for (size_t i = 0; i < cfg.plugins.size(); ++i) {
