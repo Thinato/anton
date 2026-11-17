@@ -72,6 +72,7 @@ inline std::string merged_config(const std::string& existing, const Config& c, s
     sub(gui, "density", g.density, g.density == dg.density);
     sub(gui, "author_style", g.author_style, g.author_style == dg.author_style);
     sub(gui, "state_style", g.state_style, g.state_style == dg.state_style);
+    sub(gui, "reader_placement", g.reader_placement, g.reader_placement == dg.reader_placement);
     oj cols = oj::array();
     for (auto& c : g.columns) cols.push_back(c.shown ? oj(c.name) : oj{{"name", c.name}, {"hidden", true}});
     sub(gui, "columns", cols, g.columns == dg.columns);

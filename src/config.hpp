@@ -111,6 +111,7 @@ struct GuiPrefs {
   }();
   std::string author_style = "avatar";  // avatar | color: a circle, or the name in a colour
   std::string state_style = "dot";      // dot | text | pill
+  std::string reader_placement = "beside_preview";  // beside_preview | last | window: where Open in reader puts it
   bool views = true, preview = true, results = true, run_log = true, status_bar = true;  // panes shown
   bool shows(const std::string& column) const {
     for (auto& c : columns)
@@ -181,6 +182,9 @@ inline std::string parse_gui(const nlohmann::json& g, GuiPrefs& p) {
     p.state_style = g.value("state_style", p.state_style);
     if (p.state_style != "dot" && p.state_style != "text" && p.state_style != "pill")
       return "gui.state_style: dot, text or pill";
+    p.reader_placement = g.value("reader_placement", p.reader_placement);
+    if (p.reader_placement != "beside_preview" && p.reader_placement != "last" && p.reader_placement != "window")
+      return "gui.reader_placement: beside_preview, last or window";
     if (g.contains("columns")) {  // "repo" shown, {"name": "blocks", "hidden": true} not; the rest after, hidden
       if (!g.at("columns").is_array()) return "gui.columns: want a list";
       std::vector<GuiColumn> cols;

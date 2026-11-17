@@ -586,8 +586,6 @@ void Gui::banner(const Mark& m, const std::string& path, bool spec) {
 void Gui::reader_header(const Pr& p) {
   ImDrawList* d = ImGui::GetWindowDrawList();
   float W = ImGui::GetContentRegionAvail().x;
-  if (button("Pull requests", Btn::Default, 28, "", 0, icon_back)) screen = Screen::List;
-  ImGui::SameLine(0, 12 * k());
   float gw = 0;
   ImGui::PushFont(f.medium, 0.f);
   gw = ImGui::CalcTextSize("GitHub").x + 50 * k();
@@ -768,13 +766,35 @@ void Gui::reader_pane() {
   want_files(reader_url);
   auto ds = docs();
   if (reader_tab >= ds.size()) reader_tab = 0;
+  // One reader, its tab named after the PR; the ###reader ID is what ImGui
+  // remembers its place by. Floating, it's a window of its own (a
+  // viewport that never merges into the main one).
   ImGuiWindowClass wc;
-  wc.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_AutoHideTabBar;
+  wc.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoCloseButton;  // its tab has the ×
+  if (cfg.gui.reader_placement == "window") wc.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
   ImGui::SetNextWindowClass(&wc);
+  if (reader_dock) {
+    ImGui::SetNextWindowDockID(reader_dock, ImGuiCond_Always);
+    reader_dock = 0;
+  }
+  if (reader_float) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(std::min(760 * k(), vp->WorkSize.x * 0.8f), vp->WorkSize.y * 0.85f), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(vp->WorkPos + vp->WorkSize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    reader_float = false;
+  }
+  if (focus_reader) {
+    ImGui::SetNextWindowFocus();
+    focus_reader = false;
+  }
+  std::string title = short_repo(p.repo) + "#" + std::to_string(p.number) + "###reader";
+  bool open = true;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * k(), 12 * k()));
-  bool shown = ImGui::Begin("Reader###reader", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
-                                                          ImGuiWindowFlags_NoScrollWithMouse);
+  bool shown = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+                                                      ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar();
+  if (!open) close_reader();
   if (!shown) return ImGui::End();
   reader_header(p);
   ImGui::Dummy(ImVec2(1, 4 * k()));
@@ -1023,8 +1043,10 @@ void Gui::results_pane() {
 }
 
 void Gui::outline_pane() {
+  ImGui::SetNextWindowDockID(ImGui::FindWindowByName("###results") ? ImGui::FindWindowByName("###results")->DockId : 0,
+                             ImGuiCond_FirstUseEver);  // first shown: a tab beside Results
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * k(), 12 * k()));
-  bool shown = ImGui::Begin("Outline###outline", nullptr, ImGuiWindowFlags_NoCollapse);
+  bool shown = ImGui::Begin("Outline###outline", &show_outline, ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   auto ds = docs();
@@ -1077,7 +1099,9 @@ void Gui::llm_pane() {
     ImGui::SetNextWindowFocus();
     focus_llm = false;
   }
-  bool shown = ImGui::Begin("LLM review###llm", nullptr, ImGuiWindowFlags_NoCollapse);
+  ImGui::SetNextWindowDockID(ImGui::FindWindowByName("###results") ? ImGui::FindWindowByName("###results")->DockId : 0,
+                             ImGuiCond_FirstUseEver);
+  bool shown = ImGui::Begin("LLM review###llm", &show_llm, ImGuiWindowFlags_NoCollapse);
   ImGui::PopStyleVar();
   if (!shown) return ImGui::End();
   auto notes = notes_of(reader_url);

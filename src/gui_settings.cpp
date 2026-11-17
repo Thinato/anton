@@ -369,7 +369,7 @@ void Gui::settings_window() {
     }
     ImGui::Dummy(ImVec2(1, 8 * k()));
     if (button("Reset layout", Btn::Default, 30)) {
-      reset_main = reset_reader = true;
+      reset_layout = true;
       flash("layout reset");
     }
   } else if (settings_page == 2) {  // Views
@@ -595,10 +595,10 @@ void Gui::palette() {
     std::function<void()> run;
   };
   std::vector<Item> items;
-  const Pr* cur = screen == Screen::Reader && cache.count(reader_url) ? &cache.at(reader_url) : selected_pr();
+  const Pr* cur = current_pr();
   if (cur) {
     std::string g = "Actions on " + short_repo(cur->repo) + "#" + std::to_string(cur->number);
-    const FileTab* ft = screen == Screen::Reader ? reader_tab_file() : nullptr;
+    const FileTab* ft = reader_focused ? reader_tab_file() : nullptr;
     std::string url = cur->url;
     for (auto& [i, a] : plugin_keys()) {
       std::string label = capital(strip_emoji(a.label.empty() ? a.id : a.label));
@@ -616,14 +616,14 @@ void Gui::palette() {
         if (m.line > 0 && (m.level == "error") && !m.text.empty()) {
           items.push_back({g, "→", "Jump to the first row that did not pass", path_tail(m.file, 1) + ", line " + std::to_string(m.line),
                            "", t.muted, [this, c = *cur, m] {
-                             if (screen != Screen::Reader || reader_url != c.url) open_reader(c);
+                             if (!reader_open || reader_url != c.url) open_reader(c);
                              jump(m.file, m.line);
                            }});
           break;
         }
       break;
     }
-    if (screen != Screen::Reader) items.push_back({g, "→", "Open in reader", "description and files", "Enter", t.muted, [this, c = *cur] { open_reader(c); }});
+    if (!reader_focused) items.push_back({g, "→", "Open in reader", "description and files", "Enter", t.muted, [this, c = *cur] { open_reader(c); }});
     items.push_back({g, "→", "Open on GitHub", "", "w", t.muted, [this, url] { open(url); }});
     items.push_back({g, "→", "Copy URL", "", "y", t.muted, [this, url] {
                        ImGui::SetClipboardText(url.c_str());
@@ -631,7 +631,7 @@ void Gui::palette() {
                      }});
     if (has_note(url)) items.push_back({g, "→", "Read the note", "LLM review", "n", t.muted, [this, c = *cur] {
                                           open_reader(c);
-                                          focus_llm = true;
+                                          show_llm = focus_llm = true;
                                         }});
   }
   // pull requests: every one fetched, the active view's first
@@ -656,8 +656,8 @@ void Gui::palette() {
   for (size_t i = 0; i < tabs.size(); ++i)
     items.push_back({"Views", "≡", "Go to " + tabs[i].v.name, tabs[i].v.query, i < 9 ? std::to_string(i + 1) : "", t.muted,
                      [this, i] {
-                       screen = Screen::List;
                        switch_view(i);
+                       focus_list = true;
                      }});
   items.push_back({"Views", "+", "New view", "a GitHub search", "+", t.muted, [this] { act("+"); }});
   items.push_back({"Views", "↻", "Refresh", "every " + std::to_string(cfg.refresh_seconds) + "s", "r", t.muted, [this] { refresh(); }});
@@ -675,7 +675,7 @@ void Gui::palette() {
   pane("Views", &cfg.gui.views);
   pane("Preview", &cfg.gui.preview);
   pane("Run log", &cfg.gui.run_log);
-  items.push_back({g, "⚙", "Reset layout", "the panes as they first were", "", t.muted, [this] { reset_main = reset_reader = true; }});
+  items.push_back({g, "⚙", "Reset layout", "the panes as they first were", "", t.muted, [this] { reset_layout = true; }});
   items.push_back({g, "⚙", "Open config.json", tilde(config_path()), "", t.muted, [this] { open_config(); }});
   for (size_t i = 0; i < cfg.plugins.size(); ++i) {
     std::string name = cfg.plugins[i].name, file = plugin_file(cfg.plugins[i]);

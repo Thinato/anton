@@ -149,7 +149,7 @@ void Gui::apply_theme() {
   s.ItemSpacing = ImVec2(8 * k(), 6 * k());
   s.ItemInnerSpacing = ImVec2(6 * k(), 4 * k());
   s.CellPadding = ImVec2(8 * k(), 0);
-  s.WindowRounding = 8;
+  s.WindowRounding = 0;  // a floating pane may be an OS window of its own: square, as the OS draws it
   s.ChildRounding = 6;
   s.FrameRounding = 6;
   s.PopupRounding = 8;
@@ -637,7 +637,12 @@ void Gui::frame() {
   view_err.clear();
   cur_rows = rows(active, &view_err).value_or(std::vector<Pr>{});
   if (sel_url.empty() && !cur_rows.empty()) sel_url = cur_rows[0].url;
-  if (screen == Screen::Reader && !cache.count(reader_url)) screen = Screen::List;
+  if (reader_open && !cache.count(reader_url)) reader_open = false;
+  // The reader's keys while it, or a pane about its PR, has the focus.
+  reader_focused = false;
+  if (ImGuiWindow* nav = ImGui::GetCurrentContext()->NavWindow; nav && reader_open)
+    for (const char* w : {"###reader", "###results", "###outline", "###llm", "###runlog", "###problems"})
+      reader_focused = reader_focused || nav->RootWindow->ID == ImHashStr(w);
 
   ImGui::PushFont(f.regular, 0.f);
 #ifndef __APPLE__
@@ -655,7 +660,7 @@ void Gui::frame() {
 }
 
 const Pr* Gui::current_pr() const {
-  if (screen == Screen::Reader && cache.count(reader_url)) return &cache.at(reader_url);
+  if (reader_focused && cache.count(reader_url)) return &cache.at(reader_url);
   return selected_pr();
 }
 
@@ -685,7 +690,7 @@ void Gui::send_key(int key) {
 
 std::vector<Menu> Gui::menus() {
   const Pr* cur = current_pr();
-  bool typing = ImGui::GetIO().WantTextInput, reading = screen == Screen::Reader;
+  bool typing = ImGui::GetIO().WantTextInput;
   Cmd sep;
   auto flag = [this](bool* v) { return [this, v] { *v = !*v; save(); }; };
   auto pick = [this](std::string* v, std::string to) { return [this, v, to] { *v = to; save(); }; };
@@ -707,7 +712,7 @@ std::vector<Menu> Gui::menus() {
 #endif
     file.push_back({"Open config.json", "", [this] { open_config(); }});
     file.push_back(sep);
-    file.push_back({"Close Reader", "Mod+W", [this] { screen = Screen::List; }, reading});
+    file.push_back({"Close Reader", "Mod+W", [this] { close_reader(); }, reader_open});
 #ifndef __APPLE__
     file.push_back(sep);
     file.push_back({"Quit", "Mod+Q", [this] { quit(); }});
@@ -772,7 +777,7 @@ std::vector<Menu> Gui::menus() {
                   {"Zoom Out", "Mod+-", [this] { zoom(-1); }, g.font_size > 11},
                   {"Actual Size", "Mod+0", [this] { zoom(0); }},
                   sep,
-                  {"Reset Layout", "", [this] { reset_main = reset_reader = true; }},
+                  {"Reset Layout", "", [this] { reset_layout = true; }},
 #ifdef __APPLE__
                   {full ? "Exit Full Screen" : "Enter Full Screen", "Ctrl+Mod+F", [this] { mac_toggle_fullscreen(window); }}}});
 #else
@@ -780,7 +785,7 @@ std::vector<Menu> Gui::menus() {
 #endif
   }
   {
-    std::vector<Cmd> prs = {{"Open in Reader", "Enter", [this] { act("⏎"); }, cur != nullptr && !reading},
+    std::vector<Cmd> prs = {{"Open in Reader", "Enter", [this] { act("⏎"); }, selected_pr() != nullptr},
                             {"Open on GitHub", "W", [this] { act("w"); }, cur != nullptr},
                             {"Copy URL", "Y", [this] { act("y"); }, cur != nullptr},
                             sep,
@@ -795,8 +800,8 @@ std::vector<Menu> Gui::menus() {
     prs.push_back(sep);
     for (size_t i = 0; i < tabs.size(); ++i)
       prs.push_back({tabs[i].v.name, i < 9 ? std::to_string(i + 1) : "", [this, i] {
-                       screen = Screen::List;
                        switch_view(i);
+                       focus_list = true;
                      },
                      true, i == active});
     prs.push_back({"New View", "+", [this] { act("+"); }});
@@ -835,6 +840,8 @@ std::vector<Menu> Gui::menus() {
                    else glfwMaximizeWindow(window);
                  }},
                 sep,
+                {"Outline", "", flag(&show_outline), reader_open, show_outline},
+                {"LLM review", "", flag(&show_llm), reader_open, show_llm},
                 {"Status bar", "", flag(&cfg.gui.status_bar), true, cfg.gui.status_bar}}});
   m.push_back({"Help",
                {{"Search or Run a Command", "", [this] { palette_open = palette_focus = true; }},
@@ -1030,12 +1037,12 @@ void Gui::status_bar() {
       for (auto& [url, info] : live[i].prs)
         if (info.marks_summary && result_of(*info.marks_summary) == Result::Running) {
           dot = t.accent;
-          if (url == reader_url || screen == Screen::List) name += " · running";
+          if (url == reader_url || !reader_focused) name += " · running";
           break;
         }
       item(name, t.muted, dot);
     }
-    if (screen == Screen::Reader) {
+    if (reader_focused) {
       auto ds = docs();
       if (reader_tab < ds.size() && ds[reader_tab].text) {
         int lines = static_cast<int>(std::count(ds[reader_tab].text->begin(), ds[reader_tab].text->end(), '\n'));
@@ -1065,7 +1072,7 @@ void Gui::status_bar() {
   ImGui::PopStyleVar(2);
 }
 
-// Was this dock space laid out before (by us, or by the user in the layout
+// Was the dock space laid out before (by us, or by the user in the layout
 // file)? A window's remembered DockId says so.
 static bool laid_out(ImGuiID id, std::initializer_list<const char*> windows) {
   ImGuiDockNode* n = ImGui::DockBuilderGetNode(id);
@@ -1075,33 +1082,54 @@ static bool laid_out(ImGuiID id, std::initializer_list<const char*> windows) {
   return false;
 }
 
-void Gui::build_main_layout(ImGuiID id, ImVec2 size) {
+// The dock node a window is in, or was last in (a closed tab's stays).
+static ImGuiID dock_of(const char* name) {
+  ImGuiID id = 0;
+  if (ImGuiWindow* w = ImGui::FindWindowByName(name)) id = w->DockId;
+  else if (ImGuiWindowSettings* s = ImGui::FindWindowSettingsByID(ImHashStr(name))) id = s->DockId;
+  return id && ImGui::DockBuilderGetNode(id) ? id : 0;
+}
+
+// The canvas's: Views 200px | Pull requests | Preview 520px. The reader
+// joins Preview's node when it opens (dock_reader).
+void Gui::build_layout(ImGuiID id, ImVec2 size) {
   ImGui::DockBuilderRemoveNode(id);
   ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
   ImGui::DockBuilderSetNodeSize(id, size);
   ImGuiID center = id;
-  ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 224 * k() / size.x, nullptr, &center);
-  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 392 * k() / (size.x - 224 * k()), nullptr, &center);
+  float left_w = 200 * k(), right_w = 520 * k();
+  ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, std::min(0.3f, left_w / size.x), nullptr, &center);
+  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, std::min(0.6f, right_w / (size.x - left_w)), nullptr, &center);
   ImGui::DockBuilderDockWindow("###views", left);
   ImGui::DockBuilderDockWindow("###preview", right);
   ImGui::DockBuilderDockWindow("###prs", center);
   ImGui::DockBuilderFinish(id);
+  relayout = true;
 }
 
-void Gui::build_reader_layout(ImGuiID id, ImVec2 size) {
-  ImGui::DockBuilderRemoveNode(id);
-  ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
-  ImGui::DockBuilderSetNodeSize(id, size);
-  ImGuiID center = id;
-  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 360 * k() / size.x, nullptr, &center);
-  ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 172 * k() / size.y, nullptr, &center);
-  ImGui::DockBuilderDockWindow("###reader", center);
-  ImGui::DockBuilderDockWindow("###results", right);
-  ImGui::DockBuilderDockWindow("###outline", right);
-  ImGui::DockBuilderDockWindow("###llm", right);
-  ImGui::DockBuilderDockWindow("###runlog", bottom);
-  ImGui::DockBuilderDockWindow("###problems", bottom);
-  ImGui::DockBuilderFinish(id);
+// When the reader opens: Results, Run log and Problems go in a node split
+// off under Preview's (the first time, and after a layout is rebuilt),
+// then the reader where gui.reader_placement says: a tab in Preview's
+// node, where ImGui last had it, or floating in a window of its own.
+void Gui::dock_reader(ImGuiID dockspace) {
+  ImGuiID node = dock_of("###preview");
+  if (!node) node = dock_of("###prs");
+  bool fresh = !ImGui::FindWindowByName("###results") && !ImGui::FindWindowSettingsByID(ImHashStr("###results"));
+  if (node && (fresh || relayout)) {
+    ImGuiDockNode* n = ImGui::DockBuilderGetNode(node);
+    float h = n && n->Size.y > 0 ? n->Size.y : ImGui::GetMainViewport()->WorkSize.y;
+    ImGuiID top = 0;
+    ImGuiID below = ImGui::DockBuilderSplitNode(node, ImGuiDir_Down, std::clamp(196 * k() / h, 0.1f, 0.5f), nullptr, &top);
+    for (const char* w : {"###results", "###runlog", "###problems"}) ImGui::DockBuilderDockWindow(w, below);
+    ImGui::DockBuilderFinish(dockspace);
+    node = top;
+  }
+  relayout = false;
+  const std::string& where = cfg.gui.reader_placement;
+  bool known = ImGui::FindWindowByName("###reader") || ImGui::FindWindowSettingsByID(ImHashStr("###reader"));
+  if (where == "last" && known) return;
+  if (where == "window") reader_float = true;
+  else reader_dock = node;
 }
 
 void Gui::dock_spaces() {
@@ -1119,39 +1147,38 @@ void Gui::dock_spaces() {
   ImGui::Begin("##dockhost", nullptr, host);
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(3);
-  ImGuiID main_id = ImGui::GetID("MainDock"), reader_id = ImGui::GetID("ReaderDock");
+  ImGuiID id = ImGui::GetID("MainDock");
   ImVec2 size = ImGui::GetContentRegionAvail();
-  bool list = screen == Screen::List;
-  if (list && (reset_main || !laid_out(main_id, {"###views", "###prs", "###preview"}))) {
-    build_main_layout(main_id, size);
-    reset_main = false;
+  if (reset_layout || !laid_out(id, {"###views", "###prs", "###preview"})) {
+    build_layout(id, size);
+    reset_layout = false;
+    if (reader_open) place_reader = true;
   }
-  if (!list && (reset_reader || !laid_out(reader_id, {"###reader", "###results", "###runlog"}))) {
-    build_reader_layout(reader_id, size);
-    reset_reader = false;
-    pick_tabs = 3;
+  if (place_reader) {
+    place_reader = false;
+    pick_tabs = 2;
+    dock_reader(id);
   }
-  ImGui::DockSpace(main_id, size, list ? 0 : ImGuiDockNodeFlags_KeepAliveOnly);
-  ImGui::DockSpace(reader_id, size, list ? ImGuiDockNodeFlags_KeepAliveOnly : 0);
+  ImGui::DockSpace(id, size);
   ImGui::End();
 
-  if (list) {
-    if (cfg.gui.views) views_pane();
-    prs_pane();
-    if (cfg.gui.preview) preview_pane();
-  } else {
+  if (cfg.gui.views) views_pane();
+  prs_pane();
+  if (cfg.gui.preview) preview_pane();
+  if (reader_open) {
     reader_pane();
-    results_pane();
-    outline_pane();
-    llm_pane();
+    if (cfg.gui.results) results_pane();
     if (cfg.gui.run_log) {
       runlog_pane();
       problems_pane();
     }
-    // a rebuilt layout opens on Results and Run log, the canvas's tabs
+    if (show_outline) outline_pane();
+    if (show_llm) llm_pane();
+    // just placed: its tab and Results are the ones shown (the newest tab in a node would be)
     if (pick_tabs > 0) {
       --pick_tabs;
-      for (const char* name : {"Results###results", "Run log###runlog", "Reader###reader"}) ImGui::SetWindowFocus(name);
+      if (cfg.gui.results) ImGui::SetWindowFocus("###results");
+      ImGui::SetWindowFocus("###reader");
     }
   }
 }
@@ -1181,11 +1208,11 @@ void Gui::keys() {
   if (palette_open || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return;
   if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
     if (settings_open) settings_open = false;
-    else if (screen == Screen::Reader) screen = Screen::List;
+    else if (reader_focused) close_reader();
     return;
   }
   if (io.WantTextInput || mod || settings_open) return;
-  bool reader = screen == Screen::Reader;
+  bool reader = reader_focused;
   auto pressed = [](ImGuiKey key) { return ImGui::IsKeyPressed(key, true); };
   if (!reader) {
     if (pressed(ImGuiKey_DownArrow)) select(1);
@@ -1214,7 +1241,7 @@ void Gui::keys() {
     std::string ch(1, static_cast<char>(c));
     if (reader) {
       auto ds = docs();
-      if (ch == "q") screen = Screen::List;
+      if (ch == "q") close_reader();
       else if (ch == "j") scroll_by += 60 * k();
       else if (ch == "k") scroll_by -= 60 * k();
       else if (ch == " ") scroll_by += 1e6f;
@@ -1232,7 +1259,7 @@ void Gui::keys() {
         }
       } else if (ch == "w") open(reader_url);
       else if (ch == "y") act("y");
-      else if (ch == "n") focus_llm = true;
+      else if (ch == "n") show_llm = focus_llm = true;
       else if (ch == "?") palette_open = palette_focus = true;
       else if (ch == ",") settings_open = true;
       else {

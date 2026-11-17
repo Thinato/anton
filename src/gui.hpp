@@ -6,8 +6,9 @@
 //                     the status bar, keys, theme, drawing helpers
 //   gui_menu_mac.mm   the macOS menu bar, NSMenus built from that table
 //   gui_list.cpp      the PR list's panes: Views, Pull requests, Preview
-//   gui_reader.cpp    the reader: a PR's documents with temoc results,
-//                     Results, Outline, LLM review, Run log, Problems
+//   gui_reader.cpp    the reader, a tab in the one dock space: a PR's
+//                     documents with temoc results; Results, Outline,
+//                     LLM review, Run log, Problems
 //   gui_settings.cpp  the Settings window and the command palette
 //   gui_main.cpp      flags, the window and loop, --screenshot
 // Everything runs on the UI thread; Core's workers post() back to it.
@@ -35,7 +36,6 @@ struct Fonts {
   ImFont* mono = nullptr;      // JetBrains Mono (or the system's monospace)
 };
 
-enum class Screen { List, Reader };
 enum class Btn { Default, Primary, Ghost };
 
 // One entry of the menus. The macOS menu bar (gui_menu_mac.mm) and the
@@ -87,8 +87,7 @@ struct Gui : Core {
   void on_plugin_line(size_t i, const std::string& line, bool is_err) override;
   void on_plugin_exit(size_t i, int code) override;
 
-  // -- screen state ------------------------------------------------------------------
-  Screen screen = Screen::List;
+  // -- what's shown ------------------------------------------------------------------
   std::string sel_url;  // the selected PR; kept across refreshes
   bool scroll_to_sel = false;
   std::string qbuf;     // the filter input
@@ -100,8 +99,8 @@ struct Gui : Core {
   bool palette_open = false, palette_focus = false;
   std::string palette_q;
   int palette_sel = 0;
-  bool reset_main = false, reset_reader = false;  // rebuild a dock space's default layout
-  int pick_tabs = 0;  // frames left to select Results and Run log in their nodes, after a rebuild
+  bool reset_layout = false;  // rebuild the dock space's default layout
+  bool relayout = false;      // ...it was: the reader's panes get their node again
   std::string rate_limit;                         // "4,812 / 5,000"
   std::time_t last_rate = 0;
   std::time_t last_os_check = 0;
@@ -123,6 +122,15 @@ struct Gui : Core {
   float scroll_by = 0;  // j/k, space, g/G: the open document scrolls by this (pages when |x| >= 1e6)
   std::deque<LogEntry> runlog;
   bool focus_llm = false;
+  bool reader_open = false;     // the reader's tab (###reader) is there
+  bool reader_focused = false;  // it, or a pane about its PR, has the focus: the reader's keys
+  bool place_reader = false;    // it just opened: put it where gui.reader_placement says
+  ImGuiID reader_dock = 0;      // ...that node, on its next Begin
+  bool reader_float = false;    // ...or floating, in a window of its own
+  bool focus_reader = false, focus_list = false;
+  int pick_tabs = 0;            // frames left to bring the reader's and Results' tabs to the front
+  bool show_outline = false, show_llm = false;  // Window › Outline, LLM review
+  void close_reader();  // its ×, Cmd/Ctrl W, Esc, q: back to the list
 
   // -- frame ---------------------------------------------------------------------------
   void frame();  // the whole UI, between ImGui::NewFrame and Render
@@ -139,8 +147,8 @@ struct Gui : Core {
   const Pr* current_pr() const;  // the reader's PR while it has the focus, else the list's
   void status_bar();
   void dock_spaces();
-  void build_main_layout(ImGuiID id, ImVec2 size);
-  void build_reader_layout(ImGuiID id, ImVec2 size);
+  void build_layout(ImGuiID id, ImVec2 size);
+  void dock_reader(ImGuiID dockspace);
   void keys();
   void check_os_appearance();
   void poll_rate_limit();

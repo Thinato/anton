@@ -274,6 +274,10 @@ int main(int argc, char** argv) {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  // Panes dragged out of the window, and a reader opened "in its own
+  // window", are OS windows. Not for --screenshot: its window is hidden
+  // and drawn offscreen.
+  if (!shooting) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
   io.ConfigWindowsMoveFromTitleBarOnly = true;
   static std::string ini = gui_layout_path();
   if (shooting) {
@@ -400,7 +404,7 @@ int main(int argc, char** argv) {
         }
       }
       bool ready = staged;
-      if (ready && g->screen == Screen::Reader) {
+      if (ready && g->reader_open) {
         const auto& b = g->bodies[g->reader_url];
         const Core::Files* fs = g->reader_files();
         ready = !b.loading && b.updated != -1 && fs && !fs->loading;
@@ -413,7 +417,7 @@ int main(int argc, char** argv) {
                 g->reader_tab = i, found = true;
         }
       }
-      if (ready && g->screen == Screen::List && !g->cur_rows.empty())
+      if (ready && !g->reader_open && !g->cur_rows.empty())
         if (const Pr* p = g->selected_pr(); p && p->url == g->sel_url)
           ready = !g->bodies[p->url].loading && g->bodies[p->url].updated != -1;
       if (ready && !ready_at) ready_at = secs();
@@ -423,8 +427,8 @@ int main(int argc, char** argv) {
         settle += shot.wait;
         if (!pressed && secs() - ready_at > 1.5) {
           pressed = true;
-          const Core::FileTab* ft = g->screen == Screen::Reader ? g->reader_tab_file() : nullptr;
-          std::string url = g->screen == Screen::Reader ? g->reader_url : g->sel_url;
+          const Core::FileTab* ft = g->reader_open ? g->reader_tab_file() : nullptr;
+          std::string url = g->reader_open ? g->reader_url : g->sel_url;
           g->plugin_action(shot.press, url, ft && ft->spec ? ft->path : "");
         }
       }
@@ -490,6 +494,11 @@ int main(int argc, char** argv) {
       gl.Clear(GL_COLOR_BUFFER_BIT_);
     }
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {  // the other OS windows; they switch GL contexts
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+      glfwMakeContextCurrent(window);
+    }
     glfwSwapBuffers(window);
   }
 

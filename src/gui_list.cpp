@@ -25,9 +25,16 @@ void Gui::select(int by) {
   scroll_to_sel = true;
 }
 
+// The reader's tab opens on p, or turns to it if it's open already.
 void Gui::open_reader(const Pr& p) {
   prepare_reader(p);
-  screen = Screen::Reader;
+  if (!reader_open) place_reader = true;
+  reader_open = focus_reader = true;
+}
+
+void Gui::close_reader() {
+  reader_open = false;
+  focus_list = true;
 }
 
 void Gui::act(const std::string& key) {
@@ -37,7 +44,7 @@ void Gui::act(const std::string& key) {
   } else if (key == "w") {
     if (cur) open(cur->url);
   } else if (key == "y") {
-    std::string url = screen == Screen::Reader ? reader_url : cur ? cur->url : "";
+    std::string url = current_pr() ? current_pr()->url : "";
     if (!url.empty()) {
       ImGui::SetClipboardText(url.c_str());
       flash("copied " + url);
@@ -61,7 +68,7 @@ void Gui::act(const std::string& key) {
   } else if (key == "n") {
     if (cur && has_note(cur->url)) {
       open_reader(*cur);
-      focus_llm = true;
+      show_llm = focus_llm = true;
     } else if (cur) {
       flash("no note on this PR");
     }
@@ -809,6 +816,10 @@ void Gui::pr_table() {
 
 void Gui::prs_pane() {
   std::string title = view().name + "  " + std::to_string(cur_rows.size()) + "###prs";
+  if (focus_list) {
+    ImGui::SetNextWindowFocus();
+    focus_list = false;
+  }
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   bool shown = ImGui::Begin(title.c_str(), nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                                                        ImGuiWindowFlags_NoScrollWithMouse);
