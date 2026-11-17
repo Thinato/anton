@@ -1216,8 +1216,13 @@ void Gui::dock_spaces() {
   ImVec2 size = ImGui::GetContentRegionAvail();
   // A layout from before the reader was a tab has its panes in a dock space
   // of their own, never submitted now: it goes, and they get a node again.
+  // Their settings go too (frame 1, before any of them exists), so the
+  // next reader finds them fresh even in a later session: the layout file
+  // is saved without ReaderDock, and with their DockIds zeroed.
   if (ImGuiID old = ImGui::GetID("ReaderDock"); ImGui::DockBuilderGetNode(old)) {
     ImGui::DockBuilderRemoveNode(old);
+    for (const char* w : {"###reader", "###results", "###outline", "###llm", "###runlog", "###problems"})
+      ImGui::ClearWindowSettings(w);
     relayout = true;
   }
   if (reset_layout || !laid_out(id, {"###views", "###prs", "###preview"})) {
