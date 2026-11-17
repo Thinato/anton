@@ -1,8 +1,8 @@
 name: test
 
 # Builds everything, anton-gui included, runs the self-checks and draws
-# anton-gui's screens on the demo, on every PR; required to merge. Linux only:
-# the checks are pure logic, and the macOS build is exercised by release.yml.
+# anton-gui's screens on the demo, on every PR; required to merge. On Linux,
+# and on macOS for anton-gui's Objective-C++ menu bar.
 #
 # No `paths:` filter on the trigger. A workflow skipped that way never reports,
 # so a required check would block a docs-only PR forever. Instead the workflow
@@ -92,3 +92,23 @@ jobs:
           name: anton-gui-screenshots-linux
           path: shots/
           retention-days: 7
+
+  # anton-gui's macOS menu bar is Objective-C++ (src/gui_menu_mac.mm), which
+  # only macOS compiles: build it here too, not only after a merge. No
+  # screenshots: the runner has no OpenGL pixel format to open a window with.
+  build-macos:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: macos-15  # the release build's image
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Self-checks
+        run: ctest --test-dir build --output-on-failure

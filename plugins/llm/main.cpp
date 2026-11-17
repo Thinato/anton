@@ -190,7 +190,11 @@ int main(int argc, char** argv) {
       emit(json({{"health", "error"}, {"text", problem}}).dump(-1, ' ', false, json::error_handler_t::replace));
     } else {
       json actions = json::array();
-      for (auto& r : reviewers) actions.push_back({{"id", r.key}, {"key", r.key}, {"label", r.label}});
+      for (auto& r : reviewers) {
+        json a = {{"id", r.key}, {"key", r.key}, {"label", r.label}};
+        if (!r.button.empty()) a["button"] = r.button;
+        actions.push_back(a);
+      }
       emit(R"({"health":"ok"})");
       emit(json({{"actions", actions}}).dump(-1, ' ', false, json::error_handler_t::replace));
     }

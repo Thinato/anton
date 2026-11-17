@@ -182,17 +182,20 @@ without breaking old anton builds.
 ### `actions` — keys the plugin handles (optional)
 
 ```json
-{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"},
-             {"id": "run", "key": "T", "label": "run the PR's temoc specs", "button": "Run specs", "line": true}]}
+{"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Reviewing"},
+             {"id": "run", "key": "T", "label": "run the PR's temoc specs", "button": "Run", "line": true}]}
 ```
 
 Each `key` (one character) becomes a key on the selected PR, and in the
 reader on the PR it shows; pressing it sends `{"action": id, "pr": url}` on
 the plugin's stdin and flashes the `label`. Each action is also a button
-(`v Toggle 👀`) in the list's button row and the reader's footer, and in the
-reader's outline under that plugin's marks; `button` (optional) is the short
-text for it, else the `label` is. The palette (`?`) lists them as
-`<label> · <plugin>`. The latest `actions` line replaces the previous one;
+(`v Reviewing`) in the list's button row and the reader's footer, and in the
+reader's outline under that plugin's marks. `button` (optional) is that
+button's text: one or two words, no emoji. `label` is the long text: the
+flash, the tooltip on the button (anton-gui), the palette's entry (`?` lists
+them as `<label> · <plugin>`). Without a `button`, anton-gui shows the
+label's first word, capitalised, at most 12 characters; the TUI shows the
+label. The latest `actions` line replaces the previous one;
 actions vanish while the plugin is down. anton's own keys win a clash.
 
 An action with `"line": true` also works on part of a PR: a file, or a

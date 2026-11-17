@@ -39,7 +39,7 @@ struct Theme {
   uint32_t bg, panel, inset, border, border_muted, fg, muted, accent, accent_muted, tab_line, sel, sel_mark,
       success, success_muted, success_soft, danger, danger_muted, attention, attention_muted, done, done_muted,
       neutral, neutral_muted, btn, input_bg, primary, primary_hover, primary_border, empty, scrim, shadow,
-      palette_bg, palette_foot, palette_sel;
+      palette_bg, palette_foot, palette_sel, fg2;  // fg2: the canvas's secondary text, a step under fg
 };
 
 inline Theme make_theme(bool dark) {
@@ -51,13 +51,13 @@ inline Theme make_theme(bool dark) {
             c("rgba(248,81,73,0.12)"), c("#d29922"), c("rgba(187,128,9,0.15)"), c("#ab7df8"),
             c("rgba(171,125,248,0.15)"), c("#9198a1"), c("rgba(101,108,118,0.25)"), c("#212830"), c("#0d1117"),
             c("#238636"), c("#29903b"), c("rgba(240,246,252,0.1)"), c("#2a313c"), c("rgba(1,4,9,0.6)"),
-            c("rgba(1,4,9,0.85)"), c("#151b23"), c("#0d1117"), c("rgba(56,139,253,0.15)")};
+            c("rgba(1,4,9,0.85)"), c("#151b23"), c("#0d1117"), c("rgba(56,139,253,0.15)"), c("#d1d7e0")};
   return {false, c("#ffffff"), c("#f6f8fa"), c("#eff2f5"), c("#d1d9e0"), c("#e6eaef"), c("#1f2328"),
           c("#59636e"), c("#0969da"), c("#ddf4ff"), c("#fd8c73"), c("#ddf4ff"), c("#0969da"), c("#1a7f37"),
           c("#dafbe1"), c("#f1fbf3"), c("#d1242f"), c("#ffebe9"), c("#9a6700"), c("#fff8c5"), c("#8250df"),
           c("#fbefff"), c("#59636e"), c("#e6eaef"), c("#f6f8fa"), c("#ffffff"), c("#1f883d"), c("#1c8139"),
           c("rgba(31,35,40,0.15)"), c("#d1d9e0"), c("rgba(31,35,40,0.35)"), c("rgba(31,35,40,0.25)"),
-          c("#ffffff"), c("#f6f8fa"), c("#ddf4ff")};
+          c("#ffffff"), c("#f6f8fa"), c("#ddf4ff"), c("#25292e")};
 }
 
 // "dark", "light" or "system" (the OS appearance, os_dark) -> dark?
@@ -141,8 +141,40 @@ inline std::string strip_emoji(const std::string& s) {
   return a == std::string::npos ? "" : out.substr(a, b - a + 1);
 }
 
+// A person's name colour (gui.author_style "color"): the canvas's NAMES
+// palette for the theme, picked by a stable hash of the login (FNV-1a,
+// any case), so a name keeps its colour across runs and in both themes.
+inline uint32_t name_color(const std::string& login, bool dark) {
+  static const uint32_t on_dark[] = {0xbc8cffffu, 0xe3b341ffu, 0xd2a8ffffu, 0xff7b72ffu, 0xf0883effu,
+                                     0xa5d6ffffu, 0x56d364ffu, 0xffa657ffu, 0x79c0ffffu};
+  static const uint32_t on_light[] = {0x8250dfffu, 0x9a6700ffu, 0x6639baffu, 0xcf222effu, 0xbc4c00ffu,
+                                      0x0550aeffu, 0x1a7f37ffu, 0x953800ffu, 0x0969daffu};
+  uint32_t h = 2166136261u;
+  for (unsigned char c : lower(login)) h = (h ^ c) * 16777619u;
+  return (dark ? on_dark : on_light)[h % 9];
+}
+
+// A plugin action's button: its short `button` text, emoji dropped; when
+// it sends none (or only emoji), the first word of its `label`,
+// capitalised, at most 12 characters ("toggle 👀 reviewing in Slack" ->
+// "Toggle"); its id at the last. The long label is the button's tooltip.
+inline std::string button_label(const std::string& button, const std::string& label, const std::string& id) {
+  if (std::string b = strip_emoji(button); !b.empty()) return b;
+  std::string l = strip_emoji(label);
+  std::string w = l.substr(0, l.find(' '));
+  if (w.empty()) w = id;
+  size_t n = 0, at = 0;  // 12 characters, not bytes
+  for (; at < w.size() && n < 12; ++n) {
+    unsigned char c = w[at];
+    at += c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : 4;
+  }
+  if (at < w.size()) w = w.substr(0, at) + "…";
+  if (!w.empty() && w[0] >= 'a' && w[0] <= 'z') w[0] = static_cast<char>(w[0] - 'a' + 'A');
+  return w;
+}
+
 // The PR list's row height for a row density.
-inline float row_height(const std::string& density) { return density == "compact" ? 28.f : 38.f; }
+inline float row_height(const std::string& density) { return density == "compact" ? 24.f : density == "cozy" ? 28.f : 34.f; }
 
 // -- temoc results, read off marks -------------------------------------------------
 

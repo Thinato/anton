@@ -1,11 +1,14 @@
 #pragma once
 // anton-gui (06-gui.md): the desktop UI, Dear ImGui on GLFW and OpenGL 3.
 // Gui derives from Core, the logic it shares with the TUI, and draws it:
-//   gui.cpp           the frame: menu bar, dock spaces and their default
-//                     layout, the status bar, keys, theme, drawing helpers
+//   gui.cpp           the frame: the menus (one table for both menu bars),
+//                     the toolbar, dock spaces and their default layout,
+//                     the status bar, keys, theme, drawing helpers
+//   gui_menu_mac.mm   the macOS menu bar, NSMenus built from that table
 //   gui_list.cpp      the PR list's panes: Views, Pull requests, Preview
-//   gui_reader.cpp    the reader: a PR's documents with temoc results,
-//                     Results, Outline, LLM review, Run log, Problems
+//   gui_reader.cpp    the reader, a tab in the one dock space: a PR's
+//                     documents with temoc results; Results, Outline,
+//                     LLM review, Run log, Problems
 //   gui_settings.cpp  the Settings window and the command palette
 //   gui_main.cpp      flags, the window and loop, --screenshot
 // Everything runs on the UI thread; Core's workers post() back to it.
@@ -33,8 +36,25 @@ struct Fonts {
   ImFont* mono = nullptr;      // JetBrains Mono (or the system's monospace)
 };
 
-enum class Screen { List, Reader };
 enum class Btn { Default, Primary, Ghost };
+
+// One entry of the menus. The macOS menu bar (gui_menu_mac.mm) and the
+// in-window one (Linux) are both built from Gui::menus(), and keys() runs
+// an entry whose key has Mod in it: one code path per command.
+struct Cmd {
+  std::string label = "";     // "" = a separator
+  std::string key;            // "Mod+K", "Shift+Mod+R", "Ctrl+Mod+F" (Mod: Cmd on macOS, Ctrl elsewhere),
+                              // "F11"; or a plain key, only shown: "H", "Enter"
+  std::function<void()> run = nullptr;  // none: a submenu (sub)
+  bool enabled = true;
+  int check = -1;             // -1: no check mark; 0 or 1
+  std::vector<Cmd> sub = {};
+  bool passthrough = false;   // its key is ImGui's own (Cut, Copy, ...): keys() leaves it be
+};
+struct Menu {
+  std::string title;
+  std::vector<Cmd> items;
+};
 
 // One of the reader's documents: the description (path "") or a file.
 struct Doc {
@@ -67,8 +87,7 @@ struct Gui : Core {
   void on_plugin_line(size_t i, const std::string& line, bool is_err) override;
   void on_plugin_exit(size_t i, int code) override;
 
-  // -- screen state ------------------------------------------------------------------
-  Screen screen = Screen::List;
+  // -- what's shown ------------------------------------------------------------------
   std::string sel_url;  // the selected PR; kept across refreshes
   bool scroll_to_sel = false;
   std::string qbuf;     // the filter input
@@ -80,8 +99,8 @@ struct Gui : Core {
   bool palette_open = false, palette_focus = false;
   std::string palette_q;
   int palette_sel = 0;
-  bool reset_main = false, reset_reader = false;  // rebuild a dock space's default layout
-  int pick_tabs = 0;  // frames left to select Results and Run log in their nodes, after a rebuild
+  bool reset_layout = false;  // rebuild the dock space's default layout
+  bool relayout = false;      // ...it was: the reader's panes get their node again
   std::string rate_limit;                         // "4,812 / 5,000"
   std::time_t last_rate = 0;
   std::time_t last_os_check = 0;
@@ -103,15 +122,34 @@ struct Gui : Core {
   float scroll_by = 0;  // j/k, space, g/G: the open document scrolls by this (pages when |x| >= 1e6)
   std::deque<LogEntry> runlog;
   bool focus_llm = false;
+  bool reader_open = false;     // the reader's tab (###reader) is there
+  bool reader_focused = false;  // it, or a pane about its PR, has the focus: the reader's keys
+  bool place_reader = false;    // it just opened: put it where gui.reader_placement says
+  ImGuiID reader_dock = 0;      // ...that node, on its next Begin
+  bool reader_float = false;    // ...or floating, in a window of its own
+  bool focus_reader = false, focus_list = false;
+  int pick_tabs = 0;            // frames left to bring the reader's and Results' tabs to the front
+  bool show_outline = false, show_llm = false;  // Window › Outline, LLM review
+  void close_reader();  // its ×, Cmd/Ctrl W, Esc, q: back to the list
 
   // -- frame ---------------------------------------------------------------------------
   void frame();  // the whole UI, between ImGui::NewFrame and Render
   void apply_theme();
-  void menu_bar();
+  std::vector<Menu> menus();  // the menu bar's menus, as things are now
+  void menu_bar();            // the in-window one (not on macOS)
+  void toolbar();
+  void quit();
+  void restart_plugin(size_t i);  // and says so
+#ifndef __APPLE__
+  void toggle_fullscreen();  // F11
+#endif
+  void zoom(int by);          // the interface size; 0: back to the default
+  void send_key(int key);     // an ImGuiKey with Mod held, to ImGui (Edit's Cut, Copy, Paste, Select All)
+  const Pr* current_pr() const;  // the reader's PR while it has the focus, else the list's
   void status_bar();
   void dock_spaces();
-  void build_main_layout(ImGuiID id, ImVec2 size);
-  void build_reader_layout(ImGuiID id, ImVec2 size);
+  void build_layout(ImGuiID id, ImVec2 size);
+  void dock_reader(ImGuiID dockspace);
   void keys();
   void check_os_appearance();
   void poll_rate_limit();
@@ -119,7 +157,18 @@ struct Gui : Core {
   void save(const std::string& done = "");  // config.json, gui keys included
   void open_file(const std::string& path);  // $VISUAL/$EDITOR if graphical, else the OS's opener
   void open_config();
-  float k() const { return cfg.gui.font_size / 13.f; }  // the interface size, relative to the canvas's 13px
+  // The type scale (06-gui.md): sizes are the canvas's px at its 12px
+  // interface size, scaled by k() to the configured one.
+  float k() const { return cfg.gui.font_size / 12.f; }
+  float reading() const { return cfg.gui.reading_size / k(); }  // descriptions, specs, notes
+  float code() const { return cfg.gui.code_size / k(); }        // mono: numbers, paths, logs (key hints one less)
+  // A hover tip, unless gui.tooltips is off.
+  template <class... A>
+  void tip(const char* fmt, A... a) {
+    if (!cfg.gui.tooltips) return;
+    if constexpr (sizeof...(a) > 0) ImGui::SetTooltip(fmt, a...);
+    else ImGui::SetTooltip("%s", fmt);
+  }
 
   // -- the PR list (gui_list.cpp) ---------------------------------------------------
   std::vector<Pr> cur_rows;  // the active view's rows this frame
@@ -131,8 +180,10 @@ struct Gui : Core {
   void preview_pane();
   void filter_bar();
   void pr_table();
+  void pr_cells(const Pr& p, const std::vector<std::string>& cols, float y0, float rh, bool show_owner);
   void open_reader(const Pr& p);
-  void plugins_box(const Pr& p, bool compact);
+  void plugins_box(const Pr& p);
+  void meta_line(const Pr& p, const std::vector<std::pair<std::string, uint32_t>>& mono);
   void act(const std::string& key);  // a list key, from a key, a button or the palette
 
   // -- the reader (gui_reader.cpp) ---------------------------------------------------
@@ -153,7 +204,8 @@ struct Gui : Core {
   void jump(const std::string& path, int src);  // to source line src of a doc, its tab opened
   // Spans laid out word by word in width (size: canvas px), from the cursor;
   // the height used. measure: lay out only.
-  float rich(const std::vector<md::Span>& spans, float width, float size, uint32_t color, bool measure = false);
+  float rich(const std::vector<md::Span>& spans, float width, float size, uint32_t color, bool measure = false,
+             float line = 0);  // line: its height (canvas px); 0: 20 on 13
   float rich_width(const std::vector<md::Span>& spans, float size);
   std::map<size_t, std::vector<md::Block>> parsed;  // by the text's hash
   const std::vector<md::Block>& blocks_of(const std::string& text);
@@ -169,16 +221,20 @@ struct Gui : Core {
   uint32_t tone_bg(Tone tn) const;
   void text(const std::string& s, uint32_t color, ImFont* font = nullptr, float size = 0);
   void text_wrapped(const std::string& s, uint32_t color, ImFont* font = nullptr, float size = 0, float wrap = 0);
-  void pill(const std::string& s, Tone tn, float h = 22, const char* glyph = nullptr, bool dot = true);
-  void avatar(const std::string& login, float size = 20);
-  void diffstat_blocks(long add, long del);
+  void pill(const std::string& s, Tone tn, float h = 18, const char* glyph = nullptr, bool dot = true);
+  void state_text(const Pill& pl, uint32_t text_color = 0, float h = 16);  // ● Review required; 0: the tone's color
+  void state_cell(const Pill& pl, float h);  // in gui.state_style
+  float author_cell(const std::string& login, float width, float h, float fs = 12);  // in gui.author_style
+  void avatar(const std::string& login, float size = 14);
+  void diffstat_blocks(long add, long del, float h = 0);  // h: the line to center on (0: the text's)
   using Icon = void (*)(ImDrawList*, ImVec2, float, ImU32);
-  bool button(const std::string& label, Btn kind = Btn::Default, float h = 28, const std::string& key = "",
+  bool button(const std::string& label, Btn kind = Btn::Default, float h = 24, const std::string& key = "",
               float w = 0, Icon icon = nullptr);
-  float button_width(const std::string& label, Btn kind = Btn::Default, const std::string& key = "", Icon icon = nullptr);
-  bool icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size = 28,
-                   bool bordered = true, const char* tip = nullptr);
-  void section(const std::string& title);  // a muted 12px label
+  float button_width(const std::string& label, Btn kind = Btn::Default, const std::string& key = "", Icon icon = nullptr,
+                     float h = 24);
+  bool icon_button(const char* id, void (*icon)(ImDrawList*, ImVec2, float, ImU32), float size = 24,
+                   bool bordered = true, const char* hint = nullptr);
+  void section(const std::string& title);  // 22px: an 11px semibold muted label, a line under it
   bool link_row(const std::string& id, float h);  // a full-width hover row; true on click
   void segments(const std::vector<std::pair<std::string, uint32_t>>& parts, ImFont* font = nullptr, float size = 0);
 };
@@ -197,8 +253,6 @@ void icon_filter(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_columns(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_cross(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_chevron(ImDrawList* d, ImVec2 p, float s, ImU32 c);
-void icon_back(ImDrawList* d, ImVec2 p, float s, ImU32 c);
-void icon_sliders(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 void icon_grip(ImDrawList* d, ImVec2 p, float s, ImU32 c);
 
 // ImGui's text input on a std::string.
@@ -207,5 +261,16 @@ bool input(const char* id, std::string& s, ImGuiInputTextFlags flags = 0, const 
 
 std::string tilde(const std::string& path);
 std::string short_repo(const std::string& repo);
+std::string sort_label(Sort s);  // "Recently updated"
+void draw_menu(const std::vector<Cmd>& items);  // as ImGui menu items, in an open menu or popup
+
+#ifdef __APPLE__
+// gui_menu_mac.mm
+void mac_install_menu(Gui* g);  // the menu bar, from g->menus()
+void mac_about();
+void mac_hide();
+void mac_toggle_fullscreen(GLFWwindow* w);
+bool mac_fullscreen(GLFWwindow* w);
+#endif
 
 }  // namespace anton::gui

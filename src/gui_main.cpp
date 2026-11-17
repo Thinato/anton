@@ -30,7 +30,7 @@ const char* kUsage =
     "usage: anton-gui [--query '<github search>'] [--no-plugins] [--version]\n"
     "                 [--screenshot out.png --screen list|reader|settings|palette\n"
     "                  [--theme dark|light] [--pr N] [--file F] [--size WxH] [--scale S]\n"
-    "                  [--palette-query Q] [--settings-page general|appearance|views|plugins]\n"
+    "                  [--palette-query Q] [--settings-page general|appearance|list|views|plugins]\n"
     "                  [--press KEY [--wait SECONDS]] [--keys 'j j <Enter> J r']]\n"
     "\n"
     "  --query Q       open a single ad-hoc view instead of the configured ones\n"
@@ -115,14 +115,19 @@ ImFont* add_file(const char* path, bool merge) {
   return ImGui::GetIO().Fonts->AddFontFromFileTTF(path, 13.f, &c);
 }
 
-// Inter for text with JetBrains Mono under it for the symbols Inter lacks
-// (✓ ✗ ⋯ ◦ ▶), then the system's symbol font for the rest (⚙).
-ImFont* ui_font(const unsigned char* data, unsigned size) {
-  ImFont* f = add_font(data, size);
-  add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size, true);
+// The system's symbol font, merged into the font just added (⚙ ↵ ⌘).
+void symbols() {
   for (const char* p : {"/System/Library/Fonts/Apple Symbols.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf"})
     if (add_file(p, true)) break;
+}
+
+// Inter for text with JetBrains Mono under it for the symbols Inter lacks
+// (✓ ✗ ⋯ ◦ ▶), then the system's symbol font for the rest.
+ImFont* ui_font(const unsigned char* data, unsigned size) {
+  ImFont* f = add_font(data, size);
+  add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size, true);
+  symbols();
   return f;
 }
 
@@ -235,6 +240,9 @@ int main(int argc, char** argv) {
   if (shooting && !shot.theme.empty()) cfg.gui.theme = shot.theme;
 
   glfwSetErrorCallback([](int e, const char* d) { std::fprintf(stderr, "anton-gui: glfw error %d: %s\n", e, d); });
+#ifdef __APPLE__
+  glfwInitHint(GLFW_COCOA_MENUBAR, GLFW_FALSE);  // ours replaces GLFW's (gui_menu_mac.mm)
+#endif
   if (!glfwInit()) {
     std::fprintf(stderr, "anton-gui: can't open a window (no display?)\n");
     return 1;
@@ -271,6 +279,10 @@ int main(int argc, char** argv) {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  // Panes dragged out of the window, and a reader opened "in its own
+  // window", are OS windows. Not for --screenshot: its window is hidden
+  // and drawn offscreen.
+  if (!shooting) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
   io.ConfigWindowsMoveFromTitleBarOnly = true;
   static std::string ini = gui_layout_path();
   if (shooting) {
@@ -291,9 +303,13 @@ int main(int argc, char** argv) {
   g->f.medium = ui_font(font_Inter_Medium, font_Inter_Medium_size);
   g->f.semibold = ui_font(font_Inter_SemiBold, font_Inter_SemiBold_size);
   ImFont* jetbrains = add_font(font_JetBrainsMono_Regular, font_JetBrainsMono_Regular_size);
+  symbols();  // ↵ and ⌘ in key hints
   ImFont* sysmono = system_mono();
   g->f.mono = jetbrains;
   g->apply_theme();
+#ifdef __APPLE__
+  if (!shooting) mac_install_menu(g);
+#endif
 
   for (int sig : {SIGTERM, SIGHUP, SIGINT}) {
     struct sigaction sa {};
@@ -384,8 +400,8 @@ int main(int argc, char** argv) {
           if (pick) g->open_reader(*pick);
         } else if (shot.screen == "settings") {
           g->settings_open = true;
-          const char* pages[] = {"general", "appearance", "views", "plugins"};
-          for (int i = 0; i < 4; ++i)
+          const char* pages[] = {"general", "appearance", "list", "views", "plugins"};
+          for (int i = 0; i < 5; ++i)
             if (shot.settings_page == pages[i]) g->settings_page = i;
         }
         if (shot.screen == "palette") {
@@ -394,7 +410,7 @@ int main(int argc, char** argv) {
         }
       }
       bool ready = staged;
-      if (ready && g->screen == Screen::Reader) {
+      if (ready && g->reader_open) {
         const auto& b = g->bodies[g->reader_url];
         const Core::Files* fs = g->reader_files();
         ready = !b.loading && b.updated != -1 && fs && !fs->loading;
@@ -407,7 +423,7 @@ int main(int argc, char** argv) {
                 g->reader_tab = i, found = true;
         }
       }
-      if (ready && g->screen == Screen::List && !g->cur_rows.empty())
+      if (ready && !g->reader_open && !g->cur_rows.empty())
         if (const Pr* p = g->selected_pr(); p && p->url == g->sel_url)
           ready = !g->bodies[p->url].loading && g->bodies[p->url].updated != -1;
       if (ready && !ready_at) ready_at = secs();
@@ -417,8 +433,8 @@ int main(int argc, char** argv) {
         settle += shot.wait;
         if (!pressed && secs() - ready_at > 1.5) {
           pressed = true;
-          const Core::FileTab* ft = g->screen == Screen::Reader ? g->reader_tab_file() : nullptr;
-          std::string url = g->screen == Screen::Reader ? g->reader_url : g->sel_url;
+          const Core::FileTab* ft = g->reader_open ? g->reader_tab_file() : nullptr;
+          std::string url = g->reader_open ? g->reader_url : g->sel_url;
           g->plugin_action(shot.press, url, ft && ft->spec ? ft->path : "");
         }
       }
@@ -427,11 +443,16 @@ int main(int argc, char** argv) {
         if (++frame % 4 == 0) {
           std::string key = shot.keys.front();
           shot.keys.erase(shot.keys.begin());
+#ifdef __APPLE__
+          const ImGuiKey mod = ImGuiMod_Super;  // Cmd, as the GLFW backend sends it
+#else
+          const ImGuiKey mod = ImGuiMod_Ctrl;
+#endif
           auto tap = [&](ImGuiKey k, bool ctrl = false) {
-            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+            if (ctrl) io.AddKeyEvent(mod, true);
             io.AddKeyEvent(k, true);
             io.AddKeyEvent(k, false);
-            if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, false);
+            if (ctrl) io.AddKeyEvent(mod, false);
           };
           if (key == "<Enter>") tap(ImGuiKey_Enter);
           else if (key == "<Esc>") tap(ImGuiKey_Escape);
@@ -479,6 +500,11 @@ int main(int argc, char** argv) {
       gl.Clear(GL_COLOR_BUFFER_BIT_);
     }
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {  // the other OS windows; they switch GL contexts
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+      glfwMakeContextCurrent(window);
+    }
     glfwSwapBuffers(window);
   }
 

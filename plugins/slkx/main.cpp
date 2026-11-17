@@ -256,7 +256,7 @@ static int run_plugin(int argc, char** argv) {
     for (auto& l : fold.changed(seen)) emit(l);
     emit(R"({"health":"ok"})");
     if (!c.review_ch.empty())
-      emit(R"({"actions":[{"id":"review","key":"v","label":"toggle 👀 reviewing in Slack","button":"Toggle 👀"}]})");
+      emit(R"({"actions":[{"id":"review","key":"v","label":"toggle 👀 reviewing in Slack","button":"Reviewing"}]})");
     ready = true;
   }
   cv.notify_all();

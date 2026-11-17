@@ -422,7 +422,7 @@ def plugin():
         if len(line) > 1:
             out(line)
     out({"health": "ok"})
-    out({"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Toggle 👀"}]})
+    out({"actions": [{"id": "review", "key": "v", "label": "toggle 👀 reviewing in Slack", "button": "Reviewing"}]})
     for _ in sys.stdin:  # stay up like the real plugin; ignore `v`
         pass
     time.sleep(10 ** 9)
@@ -449,7 +449,7 @@ def temoc():
         problem = "~/.config/anton/temoc.json: line 13, column 7: unexpected string literal; expected ',' or '}'"
         print(json.dumps({"health": "error", "text": problem}), flush=True)
         print(json.dumps({"actions": [{"id": "run", "key": "T", "label": "run the PR's temoc specs",
-                                       "button": "Run specs", "line": True}]}), flush=True)
+                                       "button": "Run", "line": True}]}), flush=True)
         for l in sys.stdin:
             print(json.dumps({"pr": url, "tags": [{"glyph": "🧪", "text": "error", "hint": "temoc: " + problem}],
                               "marks": {"ref": "", "lines": [], "summary": {"level": "error", "glyph": "!",
@@ -626,7 +626,7 @@ def temoc():
     run(delay=0, files=[spec, bill, seats])  # at start: as if they had just run; trials.md never has
     print(json.dumps({"health": "ok"}), flush=True)
     print(json.dumps({"actions": [{"id": "run", "key": "T", "label": "run the PR's temoc specs",
-                                   "button": "Run specs", "line": True}]}, ensure_ascii=False), flush=True)
+                                   "button": "Run", "line": True}]}, ensure_ascii=False), flush=True)
     for l in sys.stdin:
         try:
             a = json.loads(l)
