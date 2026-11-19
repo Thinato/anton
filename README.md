@@ -98,6 +98,8 @@ people, your own keys) as it was; `e` opens it in `$EDITOR` for the rest.
 {
   "views": [
     { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "recent:24h" },
+    { "name": "My turn",     "plugin": "slack", "list": "review-turn",
+      "query": "is:open -is:draft review:required", "notify": true },
     { "name": "Mine",        "query": "is:open author:@me" }
   ],
   "size": { "green_below": 450, "red_from": 1000 },
@@ -116,7 +118,8 @@ people, your own keys) as it was; `e` opens it in `$EDITOR` for the rest.
 
 - `views` replaces the default tabs. The first is where anton opens
   (`"start_view": "Mine"` picks another). A view's `"sort"` is where its sort
-  starts.
+  starts. `"notify": true` on a list view sends a desktop notification
+  when a PR newly shows in it, once a session.
 - `title_strip` cuts a regex out of every title, e.g. the ticket ID your team
   prefixes PRs with.
 - `people` renames GitHub logins and colors them. Use the same name your Slack
@@ -170,6 +173,9 @@ logged in.
 - Every PR posted to `--review-channel` shows up on a `code-review` list,
   newest post first, the same order as the channel.
 - `:eyes:` reactions become `👀 name` tags.
+- The PRs that are yours to review next are also on a `review-turn` list:
+  those posted by the person just above your newest post (their posts up to
+  the next person), that nobody else has `:eyes:` on.
 - `v` marks you as reviewing (adds your `:eyes:`). When you approve on GitHub,
   anton swaps it for `:+1:`.
 - With `--deploy-channel`, a posted PR reads `⚙ queued` until it merges.

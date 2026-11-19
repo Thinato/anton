@@ -367,6 +367,11 @@ Element Ui::render_settings() {
       int id2 = control(pick_list, nullptr, row());
       L.push_back(hbox({txt(padded("Plugin", 11), Pal::Dim), dropdown(v.plugin, id, pick_plugin, "set:plugin"), txt("   list ", Pal::Dim),
                         dropdown(v.list, id2, pick_list, "set:list"), txt("   lists the plugin offers right now", Pal::Faint)}));
+      L.push_back(text(""));
+      auto toggle_notify = [this, vi, on = !v.notify] { edit_view(vi, [on](View& w) { w.notify = on; }); };
+      id = control(toggle_notify, [toggle_notify](int) { toggle_notify(); }, row());
+      L.push_back(hbox({txt(padded("Notify", 11), Pal::Dim), check(v.notify, "when a PR newly shows here", id, toggle_notify),
+                        txt("   a desktop notification, once a session", Pal::Faint)}));
     }
     L.push_back(text(""));
     auto filter = [this, vi] {
