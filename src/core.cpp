@@ -167,7 +167,7 @@ void Core::on_fetched(const std::string& q, const Fetch& f, bool is_search) {
   std::vector<std::string> got;
   for (auto& pr : f.prs) {
     got.push_back(pr.url);
-    if (auto n = notify_fetch.find(pr.url); n != notify_fetch.end()) n->second = true;
+    if (auto n = notify_fetch.find(pr.url); n != notify_fetch.end() && !pr.partial) n->second = true;  // a state-only pass isn't fresh data
     if (!pr.owner.empty()) owners.insert(pr.owner);
     if (!pr.repo.empty()) repos.insert(pr.repo);
     auto it = cache.find(pr.url);

@@ -93,6 +93,10 @@ int main() {
   fetched({pr(4)});
   turn(4);
   assert(told.size() == 2);
+  Pr state_only = pr(4);
+  state_only.partial = true;  // a refresh's state pass landing first: the cached full data stays stale
+  fetched({state_only});
+  assert(told.size() == 2);
   fetched({pr(4, "APPROVED")});
   assert(told.size() == 2);
 
@@ -117,12 +121,22 @@ int main() {
   fetched({pr(6, "APPROVED")});
   assert(told.size() == 4 && told[3] == "My turn: acme/api#6 t6");
 
+  // a state-only pass doesn't count as the re-fetch; the full fetch after it tells
+  fetched({pr(8)});
+  turn(8);
+  Pr state8 = pr(8);
+  state8.partial = true;
+  fetched({state8});
+  assert(told.size() == 4);
+  fetched({pr(8)});
+  assert(told.size() == 5 && told[4] == "My turn: acme/api#8 t8");
+
   // views without notify never tell
   c.tabs[0].saved->notify = false;
   turn(7);
   fetched({pr(7)});
   fetched({pr(7)});
-  assert(told.size() == 4);
+  assert(told.size() == 5);
 
   std::puts("core_check: all checks passed");
 }
