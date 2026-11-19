@@ -20,6 +20,25 @@ static json react(bool add, const std::string& ch, const std::string& ts, const 
           {"reaction", emoji},
           {"item", {{"type", "message"}, {"channel", ch}, {"ts", ts}}}};
 }
+static json post(const std::string& user, const std::string& ts, const std::string& text) {
+  json m = msg("CR", ts, text);
+  m["user"] = user;
+  return m;
+}
+static bool in_turn(const Fold& f, const std::string& url) {
+  auto ls = f.line(url).value("lists", json::array());
+  return std::find(ls.begin(), ls.end(), "review-turn") != ls.end();
+}
+static std::string pr(int n) { return "https://github.com/acme/api/pull/" + std::to_string(n); }
+static std::string ts(int n) { return "17000001" + std::to_string(10 + n) + ".000000"; }
+static json deleted(const std::string& ts) {
+  return {{"type", "message"}, {"subtype", "message_deleted"}, {"channel", "CR"}, {"deleted_ts", ts}};
+}
+static json edited(const std::string& ts, const std::string& user, const std::string& text) {
+  return {{"type", "message"}, {"subtype", "message_changed"}, {"channel", "CR"},
+          {"message", {{"ts", ts}, {"user", user}, {"text", text}}}};
+}
+
 static std::vector<std::string> handles(const json& line) {
   std::vector<std::string> out;
   for (auto& t : line.value("tags", json::array())) out.push_back(t["text"]);
@@ -182,6 +201,88 @@ int main() {
     Fold h(c2);
     h.event(msg("CR", "1700000050.000000", PR1));
     assert(h.toggle_review(PR1)[0].emoji == "zoiando");
+  }
+
+  // Review turn: the run of the first other poster above your newest post
+  {
+    // alice, then bob, then you: only bob's PR is yours to review
+    Fold t(c);
+    t.event(post("UA", ts(1), pr(1)));
+    t.event(post("UB", ts(2), pr(2)));
+    assert(t.turn().empty());  // you haven't posted
+    t.event(post("UME", ts(3), pr(3)));
+    assert((t.turn() == std::set<std::string>{pr(2)}));
+    assert(!in_turn(t, pr(1)) && in_turn(t, pr(2)) && !in_turn(t, pr(3)));
+    assert((t.line(pr(2))["lists"] == json{"code-review", "review-turn"}));
+    // someone else's review emoji takes it off; yours doesn't
+    t.event(react(true, "CR", ts(2), "eyes", "UME"));
+    assert(in_turn(t, pr(2)));
+    t.event(react(true, "CR", ts(2), "zoiando", "UA"));
+    assert(!in_turn(t, pr(2)));
+    t.event(react(false, "CR", ts(2), "zoiando", "UA"));
+    assert(in_turn(t, pr(2)));
+    // on any post naming it: carol reposts it below you and reviews it there
+    t.event(post("UC", ts(4), pr(2)));
+    t.event(react(true, "CR", ts(4), "eyes", "UC"));
+    assert(t.turn().empty());
+    t.event(deleted(ts(4)));
+    assert(in_turn(t, pr(2)));
+  }
+  {
+    // bob, you, bob, you again: bob's whole run, your post inside it skipped
+    Fold t(c);
+    t.event(post("UA", ts(1), pr(1)));
+    t.event(post("UB", ts(2), pr(2)));
+    t.event(post("UME", ts(3), pr(3)));
+    t.event(post("UB", ts(4), pr(4)));
+    t.event(post("UME", ts(5), pr(5)));
+    assert((t.turn() == std::set<std::string>{pr(2), pr(4)}));
+    // your own consecutive posts change nothing
+    t.event(post("UME", ts(6), pr(6)));
+    assert((t.turn() == std::set<std::string>{pr(2), pr(4)}));
+  }
+  {
+    // a third person ends the run: bob, carol, bob, you -> bob's last post only
+    Fold t(c);
+    t.event(post("UB", ts(1), pr(1)));
+    t.event(post("UC", ts(2), pr(2)));
+    t.event(post("UB", ts(3), pr(3)));
+    t.event(post("UME", ts(4), pr(4)));
+    assert((t.turn() == std::set<std::string>{pr(3)}));
+    // a post naming two PRs puts both on
+    t.event(post("UB", ts(5), pr(5) + " " + pr(6)));
+    t.event(post("UME", ts(6), pr(7)));
+    assert((t.turn() == std::set<std::string>{pr(3), pr(5), pr(6)}));
+    // deleting your newest post falls back to your previous one
+    t.event(deleted(ts(6)));
+    assert((t.turn() == std::set<std::string>{pr(3)}));
+    // bob edits the PR out of his post: carol is the first poster above you now
+    t.event(edited(ts(3), "UB", "never mind"));
+    assert((t.turn() == std::set<std::string>{pr(2)}));
+    // and edits one back in: a message that named no PR counts from then on
+    t.event(edited(ts(3), "UB", pr(8)));
+    assert((t.turn() == std::set<std::string>{pr(8)}));
+  }
+  {
+    // changed() re-emits PRs joining and leaving the turn, not only the touched ones
+    Fold t(c);
+    t.event(post("UA", ts(1), pr(1)));
+    t.event(post("UB", ts(2), pr(2)));
+    t.changed({pr(1), pr(2)});
+    auto lines = t.changed(t.event(post("UME", ts(3), pr(3))));  // touches pr(3) only
+    assert(lines.size() == 2);  // pr(3) listed, pr(2) on review-turn
+    lines = t.changed(t.event(post("UA", ts(4), pr(4))));
+    assert(lines.size() == 1);  // pr(4) listed; your newest post hasn't moved
+    lines = t.changed(t.event(post("UME", ts(5), pr(5))));
+    assert(lines.size() == 3);  // pr(5) listed, pr(2) off, pr(4) on
+    // a bot's post is whoever posted it: its bot_id when there's no user
+    json bot = msg("CR", ts(6), pr(6));
+    bot.erase("user");
+    bot["subtype"] = "bot_message";
+    bot["bot_id"] = "BGH";
+    t.event(bot);
+    t.event(post("UME", ts(7), pr(7)));
+    assert((t.turn() == std::set<std::string>{pr(6)}));
   }
 
   std::puts("fold_check: all checks passed");
