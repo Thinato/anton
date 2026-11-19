@@ -22,6 +22,7 @@
 
 #include "config.hpp"
 #include "filters.hpp"
+#include "github.hpp"
 #include "markdown.hpp"
 #include "model.hpp"
 #include "plugins.hpp"
@@ -100,6 +101,14 @@ struct Core {
   std::set<std::string> requested_full;          // UI thread
   std::vector<std::set<std::string>> approvals;  // per plugin: new approvals not yet delivered
 
+  // -- notify views (01-anton.md, "Notify") ----------------------------------------
+  std::set<std::string> notified;            // told, or there at the start: never told (again) this session
+  std::set<std::string> notify_base;         // there when its view was first checked: judged once fetched, not told
+  std::map<std::string, bool> notify_fetch;  // newly in a notify view's list: true once re-fetched
+  std::set<std::string> notify_views;        // plugin, list and filter of each notify view seen so far
+  std::vector<bool> baselined;               // per plugin: has been ok once (one-shot: has ended once)
+  std::function<void(const std::string& title, const std::string& body)> notifier;  // the desktop's; tests swap it
+
   explicit Core(Config c);
   virtual ~Core() = default;
 
@@ -123,6 +132,7 @@ struct Core {
   void poll_watched();
   bool loading();
   void worker();  // the fetch thread
+  void on_fetched(const std::string& q, const Fetch& f, bool is_search);  // a fetch's result, on the UI thread
   std::vector<std::string> list_urls(const View& v) const;
   void refresh();
   std::optional<std::vector<Pr>> rows(size_t vi, std::string* err = nullptr) const;
@@ -136,6 +146,7 @@ struct Core {
   virtual void on_plugin_line(size_t i, const std::string& line, bool is_err);
   virtual void on_plugin_exit(size_t i, int code);
   void notify_approved();
+  void check_notify();  // tells PRs newly in a notify view
   // file (and line) go along when the action takes them ("line": true).
   bool plugin_action(const std::string& key, const std::string& url, const std::string& file = "", int line = 0);
   bool plugin_up(size_t i) const;

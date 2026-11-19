@@ -105,6 +105,8 @@ inline std::string merged_config(const std::string& existing, const Config& c, s
       if (v.is_list()) o["plugin"] = v.plugin, o["list"] = v.list;
       else o.erase("plugin"), o.erase("list");
       o["query"] = v.query;
+      if (v.is_list() && v.notify) o["notify"] = true;
+      else o.erase("notify");
       if (v.sort && *v.sort != (v.is_list() ? Sort::List : Sort::Updated))
         o["sort"] = sort_name(*v.sort);
       else

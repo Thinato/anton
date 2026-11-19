@@ -123,6 +123,30 @@ from `latestReviews`; other logins are an error: anton only knows your own),
 on screen for a while, e.g. `recent:24h`), and `-` negation of each. Anything else is an error shown in the footer, not a
 silent no-op. Full GitHub syntax remains available in search views.
 
+**Notify.** `"notify": true` on a list view tells you when a PR newly
+shows in it: a desktop notification (`osascript` on macOS, `notify-send`
+elsewhere, nothing if it is missing; title and body go in as arguments,
+never through a shell or into a script) and a flash in anton. "Shows in it"
+means on the list and passing the view's saved filter, judged on a fresh
+fetch of the PR made when it joins the list, not on what was cached. The
+Slack plugin's `review-turn` list is what it is for (`03-plugin-slkx.md`):
+
+```json
+{ "name": "My turn", "plugin": "slack", "list": "review-turn",
+  "query": "is:open -is:draft review:required", "notify": true }
+```
+
+- Once per PR per session: leaving the view and coming back is not news.
+- Not for what the view holds when it is first checked, after its
+  plugin's first `health: ok` (a one-shot plugin: its first run ending),
+  so a plugin's backfill at startup tells nothing. One of those that fails
+  the filter then (a draft, approved) is news once it passes.
+- A plugin restart backfills again; what was told or there at the start
+  stays told for the session.
+- Changing the view's plugin, list or filter starts it over from what it
+  holds then. The org/repo scope of the session does not apply.
+- Search views ignore the key; nothing is written for them.
+
 The org/repo filter applies to the active view and is kept when switching
 views (it is a session-wide scope, not per view). It works the same on both
 kinds, since `org:` and `repo:` are in the local subset.
@@ -523,6 +547,8 @@ Optional; every key has a default.
   },
   "views": [
     { "name": "Code review", "plugin": "slack", "list": "code-review", "query": "is:open" },
+    { "name": "My turn",     "plugin": "slack", "list": "review-turn",
+      "query": "is:open -is:draft review:required", "notify": true },
     { "name": "Created",     "query": "is:open author:@me", "sort": "size" }
   ],
   "plugins": [
@@ -581,8 +607,9 @@ shows on the second line, red.
   plugin and runs it again now). A plugin's command lives in the file only.
 - **Views**: the tabs in order (reorder, `+ New view`), and for the one
   picked: name, kind (a GitHub search, or the PRs a plugin lists: plugin and
-  list pickers, from the lists the plugin has sent), filter (a list view's
-  must pass the local filter), sort, Duplicate, Delete view (asks first).
+  list pickers, from the lists the plugin has sent, and Notify, above),
+  filter (a list view's must pass the local filter), sort, Duplicate,
+  Delete view (asks first).
   Changes apply to the view as saved and as it is on screen.
 - **Columns**: every built-in and command column, toggled and reordered (a
   command column's command stays in the file), the size colors with samples
@@ -685,6 +712,7 @@ tests/fold_check.cpp  assert-based self-check for fold.hpp
 tests/llm_check.cpp   assert-based self-check for llm.hpp
 tests/markdown_check.cpp  assert-based self-check for markdown.cpp
 tests/temoc_check.cpp     assert-based self-check for temoc.hpp
+tests/core_check.cpp  notify views in core.cpp, driven without a UI
 src/gui*.cpp, gui.hpp  anton-gui, the desktop UI (06-gui.md)
 src/gui_logic.hpp     its pure parts: theme tokens, pills, the run log's diff
 tests/gui_check.cpp   assert-based self-check for gui_logic.hpp and the gui keys

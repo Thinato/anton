@@ -201,3 +201,10 @@ target_link_libraries(markdown_check PRIVATE md4c ftxui::screen)
 # gui_check: anton-gui's pure parts, which lay out markdown blocks too.
 target_sources(gui_check PRIVATE src/markdown.cpp)
 target_link_libraries(gui_check PRIVATE md4c ftxui::screen)
+# core_check: the state both UIs share, driven without a UI or a worker.
+add_executable(core_check tests/core_check.cpp
+  src/core.cpp src/markdown.cpp src/proc.cpp src/github.cpp src/plugins.cpp src/update.cpp)
+target_include_directories(core_check PRIVATE src)
+target_link_libraries(core_check PRIVATE nlohmann_json::nlohmann_json md4c ftxui::screen)
+target_compile_options(core_check PRIVATE -UNDEBUG ${WARN})
+add_test(NAME core_check COMMAND core_check)

@@ -23,6 +23,7 @@ struct View {
   std::string name, query;
   std::string plugin, list;  // set together: a list view
   std::optional<Sort> sort;  // config "sort"; unset: list for list views, else updated
+  bool notify = false;       // list views: a PR newly in it is told once (01-anton.md, "Notify")
   bool is_list() const { return !list.empty(); }
   Sort sort_or_default() const { return sort.value_or(is_list() ? Sort::List : Sort::Updated); }
   bool operator==(const View&) const = default;
@@ -260,7 +261,7 @@ inline std::string parse_config(const std::string& text, Config& c) {
       c.views.clear();
       for (auto& v : j.at("views")) {
         View view{v.at("name").get<std::string>(), v.value("query", std::string("is:open")),
-                  v.value("plugin", std::string()), v.value("list", std::string()), {}};
+                  v.value("plugin", std::string()), v.value("list", std::string()), {}, v.value("notify", false)};
         if (view.plugin.empty() != view.list.empty())
           return "view \"" + view.name + "\": plugin and list go together";
         if (v.contains("sort")) {

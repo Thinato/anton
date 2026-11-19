@@ -14,7 +14,20 @@
 
 namespace anton {
 
-Core::Core(Config c) : cfg(std::move(c)) {
+// A desktop notification, off the UI thread. Title and body go in as
+// arguments, never into a script or a shell; nothing if the tool is missing.
+static void desktop_notify(const std::string& title, const std::string& body) {
+#ifdef __APPLE__
+  std::vector<std::string> argv = {"osascript", "-e", "on run argv", "-e",
+                                   "display notification (item 2 of argv) with title (item 1 of argv)", "-e",
+                                   "end run", title, body};
+#else
+  std::vector<std::string> argv = {"notify-send", "--", title, body};
+#endif
+  std::thread([argv] { run(argv); }).detach();
+}
+
+Core::Core(Config c) : cfg(std::move(c)), notifier(desktop_notify) {
   if (!cfg.adhoc_query.empty()) {
     offscreen = cfg.views;
     tabs.push_back({View{"Query", cfg.adhoc_query, "", "", {}}, std::nullopt});
@@ -28,6 +41,7 @@ Core::Core(Config c) : cfg(std::move(c)) {
   running.assign(cfg.plugins.size(), true);
   last_code.assign(cfg.plugins.size(), 0);
   approvals.resize(cfg.plugins.size());
+  baselined.assign(cfg.plugins.size(), false);
 }
 
 void Core::start() {
@@ -142,36 +156,40 @@ void Core::worker() {
     } catch (const std::exception& e) {  // odd JSON, no threads left: report, keep going
       f.error = std::string("fetch failed: ") + e.what();
     }
-    post([this, q, f = std::move(f), is_search] {
-      if (!f.viewer.empty()) viewer = f.viewer;
-      std::vector<std::string> got;
-      for (auto& pr : f.prs) {
-        got.push_back(pr.url);
-        if (!pr.owner.empty()) owners.insert(pr.owner);
-        if (!pr.repo.empty()) repos.insert(pr.repo);
-        auto it = cache.find(pr.url);
-        // A new approval: one seen happen, not one that predates anton --
-        // replaying old ones would undo a 👀 you put back for a re-review.
-        if (!pr.partial && pr.my_review == "APPROVED" && it != cache.end() && !it->second.partial &&
-            it->second.my_review_at != pr.my_review_at)
-          for (size_t i = 0; i < approvals.size(); ++i)
-            if (!one_shot(i)) approvals[i].insert(pr.url);
-        if (pr.partial && it != cache.end() && !it->second.partial) {
-          it->second.state = pr.state;  // keep the full data we already have
-          it->second.closed = pr.closed;
-        } else {
-          cache[pr.url] = pr;
-        }
-      }
-      notify_approved();
-      error = f.error;
-      if (!f.error.empty()) return;  // a failed refresh keeps the old rows
-      if (is_search) results[q] = got;
-      last_fetch = now();
-    });
+    post([this, q, f = std::move(f), is_search] { on_fetched(q, f, is_search); });
     std::lock_guard lk(mu);
     busy = !searches.empty() || !want_urls.empty() || !want_full.empty();
   }
+}
+
+void Core::on_fetched(const std::string& q, const Fetch& f, bool is_search) {
+  if (!f.viewer.empty()) viewer = f.viewer;
+  std::vector<std::string> got;
+  for (auto& pr : f.prs) {
+    got.push_back(pr.url);
+    if (auto n = notify_fetch.find(pr.url); n != notify_fetch.end()) n->second = true;
+    if (!pr.owner.empty()) owners.insert(pr.owner);
+    if (!pr.repo.empty()) repos.insert(pr.repo);
+    auto it = cache.find(pr.url);
+    // A new approval: one seen happen, not one that predates anton --
+    // replaying old ones would undo a 👀 you put back for a re-review.
+    if (!pr.partial && pr.my_review == "APPROVED" && it != cache.end() && !it->second.partial &&
+        it->second.my_review_at != pr.my_review_at)
+      for (size_t i = 0; i < approvals.size(); ++i)
+        if (!one_shot(i)) approvals[i].insert(pr.url);
+    if (pr.partial && it != cache.end() && !it->second.partial) {
+      it->second.state = pr.state;  // keep the full data we already have
+      it->second.closed = pr.closed;
+    } else {
+      cache[pr.url] = pr;
+    }
+  }
+  notify_approved();
+  check_notify();
+  error = f.error;
+  if (!f.error.empty()) return;  // a failed refresh keeps the old rows
+  if (is_search) results[q] = got;
+  last_fetch = now();
 }
 
 std::vector<std::string> Core::list_urls(const View& v) const {
@@ -197,6 +215,10 @@ void Core::refresh() {
     for (auto& t : tabs)
       if (!t.v.is_list()) request_search(effective(t.v));
   if (plugins) plugins->refresh();
+  std::vector<std::string> unfetched;  // a notify re-fetch that failed gets another try
+  for (auto& [u, got] : notify_fetch)
+    if (!got) unfetched.push_back(u);
+  request_full(unfetched);
   requested_full.clear();  // stubs whose fill failed get another try
   ++column_gen;
   last_refresh = now();
@@ -301,6 +323,7 @@ void Core::on_plugin_line(size_t i, const std::string& line, bool is_err) {
   bool was_ok = st.health == "ok";
   std::string url = apply_line(st, line);
   if (!was_ok && st.health == "ok") notify_approved();  // ready (again): catch it up
+  if (st.health == "ok" && !one_shot(i)) baselined[i] = true;  // its backfill is in: what's there now isn't news
   if (auto it = st.prs.find(url); it != st.prs.end() && !it->second.tags.empty() && !it->second.tags[0].glyph.empty())
     last_glyph[i] = it->second.tags[0].glyph;
   if (one_shot(i)) {  // health shows live even while the PRs wait for the run to end
@@ -310,6 +333,7 @@ void Core::on_plugin_line(size_t i, const std::string& line, bool is_err) {
   }
   if (!url.empty() && !cache.count(url) && !requested.count(url) && !st.prs[url].lists.empty())
     request_urls({url});
+  check_notify();
 }
 
 void Core::on_plugin_exit(size_t i, int code) {
@@ -322,6 +346,8 @@ void Core::on_plugin_exit(size_t i, int code) {
     pending[i] = PluginState{};
     for (auto& [url, info] : live[i].prs)
       if (!info.lists.empty() && !cache.count(url) && !requested.count(url)) request_urls({url});
+    baselined[i] = true;
+    check_notify();
   } else {
     running[i] = false;
     live[i] = PluginState{};  // it re-sends what is still true on restart
@@ -341,6 +367,46 @@ void Core::notify_approved() {
       it = plugins->send(i, nlohmann::json({{"event", "approved"}, {"pr", *it}}).dump()) ? approvals[i].erase(it)
                                                                                           : std::next(it);
   }
+}
+
+// A PR newly in a notify view (01-anton.md, "Notify") is told once a
+// session: a desktop notification and a flash. What a view holds when it is
+// first checked, after its plugin's first health ok, is the baseline and is
+// never told; so is a view whose plugin, list or filter just changed. A PR
+// new to the list is judged on a fresh fetch, not on what the cache had.
+void Core::check_notify() {
+  std::set<std::string> on;
+  for (const View& v : saved_views()) {
+    if (!v.notify || !v.is_list()) continue;
+    int pi = plugin_index(v.plugin);
+    std::string e;
+    auto preds = parse_local(v.query, e);
+    if (pi < 0 || !baselined[static_cast<size_t>(pi)] || !preds) continue;
+    bool first = notify_views.insert(v.plugin + "\n" + v.list + "\n" + v.query).second;
+    for (auto& u : list_urls(v)) {
+      on.insert(u);
+      if (notified.count(u)) continue;
+      if (first) notify_base.insert(u);
+      bool base = notify_base.count(u);
+      if (!base) {
+        auto [it, added] = notify_fetch.try_emplace(u, false);
+        if (added) request_full({u});
+        if (!it->second) continue;
+      }
+      auto c = cache.find(u);
+      if (c == cache.end() || c->second.partial) continue;
+      bool match = local_match(c->second, *preds, viewer);
+      notify_base.erase(u);  // judged; one that doesn't match yet may be news later
+      if (!match) continue;
+      notified.insert(u);
+      if (base) continue;
+      const Pr& p = c->second;
+      std::string what = printable(p.repo + "#" + std::to_string(p.number) + " " + shown_title(p.title));
+      notifier(v.name, what);
+      flash(v.name + ": " + what, 10);
+    }
+  }
+  std::erase_if(notify_fetch, [&](const auto& kv) { return !on.count(kv.first); });  // gone: re-fetched if it's back
 }
 
 std::vector<Core::PluginKey> Core::plugin_keys() const {
