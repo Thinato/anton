@@ -645,6 +645,8 @@ void Gui::settings_window() {
             for (auto& l : plugin_lists(tabs[i].v.plugin))
               if (ImGui::Selectable(l.c_str(), tabs[i].v.list == l)) edit_view(i, [&](View& v) { v.list = l; });
           });
+          if (check("vnotify", tabs[i].v.notify, "Notify when a PR newly shows here"))
+            edit_view(i, [on = !tabs[i].v.notify](View& v) { v.notify = on; });
         }
         label("Filter");
         ImGui::PushFont(f.mono, code() * k());

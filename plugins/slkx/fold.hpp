@@ -79,6 +79,7 @@ class Fold {
     if (urls.empty()) return {};
     Msg& msg = msgs_[{ch, ts}];
     msg.urls = urls;
+    msg.poster = poster(m);
     auto rs = m.find("reactions");
     if (rs != m.end() && rs->is_array())
       for (auto& r : *rs) {
@@ -105,7 +106,9 @@ class Fold {
         if (urls.empty()) {
           msgs_.erase(key);
         } else {
-          msgs_[key].urls = urls;  // reactions stay
+          Msg& msg = msgs_[key];
+          msg.urls = urls;  // reactions stay
+          if (msg.poster.empty()) msg.poster = poster(m);  // a message that named no PR until now
           touched.insert(urls.begin(), urls.end());
         }
         return touched;
@@ -132,8 +135,40 @@ class Fold {
     return {};
   }
 
+  // Your turn to review (03-plugin-slkx.md, "Review turn"): take your newest
+  // post in the review channel, walk up past your own posts to the first
+  // other poster, and collect their run of posts up to the next different
+  // poster. Its PRs that nobody but you has a review emoji on.
+  std::set<std::string> turn() const {
+    if (c_.me.empty() || c_.review_ch.empty()) return {};
+    std::vector<const Msg*> posts;  // the review channel, oldest first: ts order is time order
+    for (auto it = msgs_.lower_bound({c_.review_ch, ""}); it != msgs_.end() && it->first.first == c_.review_ch; ++it)
+      posts.push_back(&it->second);
+    size_t i = posts.size();
+    while (i > 0 && posts[i - 1]->poster != c_.me) --i;  // past your newest post
+    if (i == 0) return {};
+    --i;
+    std::string above;
+    std::set<std::string> run;
+    for (; i > 0; --i) {
+      const Msg& m = *posts[i - 1];
+      if (m.poster == c_.me) continue;
+      if (above.empty()) above = m.poster;
+      if (m.poster != above) break;  // a third person ends the run
+      run.insert(m.urls.begin(), m.urls.end());
+    }
+    std::set<std::string> out;
+    for (auto& u : run) {
+      bool others = false;
+      for (auto& r : reviewers(u)) others = others || r != c_.me;
+      if (!others) out.insert(u);
+    }
+    return out;
+  }
+
   // The full anton line for one PR. {"pr": url} alone clears it.
-  json line(const std::string& url) const {
+  json line(const std::string& url) const { return line(url, turn()); }
+  json line(const std::string& url, const std::set<std::string>& turn) const {
     bool listed = false;
     std::set<std::string> reviewers;
     const Msg* deploy = nullptr;
@@ -156,6 +191,7 @@ class Fold {
     json j = {{"pr", url}};
     if (listed) {
       j["lists"] = {"code-review"};
+      if (turn.count(url)) j["lists"].push_back("review-turn");
       // Newest post first, like the channel. A double holds a ts to ~1µs.
       j["order"] = std::strtod(review_ts.c_str(), nullptr);
     }
@@ -219,11 +255,16 @@ class Fold {
             {"item", {{"type", "message"}, {"channel", r.ch}, {"ts", r.ts}}}};
   }
 
-  // Lines for the given PRs that differ from what was last emitted.
-  std::vector<std::string> changed(const std::set<std::string>& urls) {
+  // Lines for the given PRs that differ from what was last emitted, and for
+  // every PR joining or leaving your review turn: any post can move it.
+  std::vector<std::string> changed(std::set<std::string> urls) {
+    std::set<std::string> t = turn();
+    urls.insert(t.begin(), t.end());
+    urls.insert(turn_.begin(), turn_.end());
+    turn_ = t;
     std::vector<std::string> out;
     for (auto& u : urls) {
-      std::string l = line(u).dump(-1, ' ', false, json::error_handler_t::replace);
+      std::string l = line(u, t).dump(-1, ' ', false, json::error_handler_t::replace);
       if (last_[u] == l) continue;
       last_[u] = l;
       out.push_back(l);
@@ -234,6 +275,7 @@ class Fold {
  private:
   struct Msg {
     std::vector<std::string> urls;
+    std::string poster;  // who posted it: a person's user id, or a bot's
     std::set<std::pair<std::string, std::string>> reacts;  // (emoji, user)
   };
 
@@ -249,6 +291,19 @@ class Fold {
   static std::string s(const json& j, const char* k) {
     auto it = j.find(k);
     return it != j.end() && it->is_string() ? it->get<std::string>() : "";
+  }
+  static std::string poster(const json& m) {
+    for (const char* k : {"user", "bot_id", "username"})
+      if (std::string v = s(m, k); !v.empty()) return v;
+    return "";
+  }
+  std::set<std::string> reviewers(const std::string& url) const {
+    std::set<std::string> out;
+    for (auto& [key, msg] : msgs_)
+      if (review_post(key, msg, url, false))
+        for (auto& [emoji, user] : msg.reacts)
+          if (c_.review_emoji.count(emoji)) out.insert(user);
+    return out;
   }
   bool watched(const std::string& ch) const {
     return !ch.empty() && (ch == c_.review_ch || ch == c_.deploy_ch);
@@ -293,6 +348,7 @@ class Fold {
   FoldConfig c_;
   std::map<std::pair<std::string, std::string>, Msg> msgs_;
   std::map<std::string, std::string> last_;  // url -> last emitted line
+  std::set<std::string> turn_;               // the review turn last emitted
 };
 
 }  // namespace anton::slkx

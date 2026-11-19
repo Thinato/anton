@@ -6,7 +6,7 @@ by its own flag; with neither flag it exits with a usage error.
 
 | flag | rule | emits |
 | --- | --- | --- |
-| `--review-channel C` | every PR posted to C is on the `code-review` list; `:eyes:`/`:zoiando:` on it means "being reviewed" | `lists`, `tags` |
+| `--review-channel C` | every PR posted to C is on the `code-review` list; `:eyes:`/`:zoiando:` on it means "being reviewed"; the ones that are yours to review next are also on `review-turn` | `lists`, `tags` |
 | `--deploy-channel C` | a PR posted to C is in the deploy queue; p2r2's reactions refine it | `status`: `⚙ queued` / `💬 Ready?` |
 
 Approved / changes requested / commented come from GitHub in anton itself:
@@ -97,6 +97,43 @@ read does not return other replies.
   The PR leaves the list when **no** message naming it remains — if it was
   posted twice and one post is deleted, it stays.
 
+**Review turn.** Whoever posts a PR reviews the one posted just above
+theirs. The PRs that are yours to review are on a second list,
+`review-turn`, as well as `code-review`:
+
+1. Take **your newest post** in the review channel that names a PR.
+2. Walk up from it, skipping your own posts. The first other poster is
+   **the person above you**: the Slack poster of the message (`user`; a
+   bot's post is whoever posted it, its `bot_id` or `username` when it has
+   no `user`). anton never matches Slack posters to GitHub authors.
+3. Their **run**: keep walking up and take every post of theirs until a
+   post by someone else (not them, not you) ends it. Your own posts inside
+   the run are skipped. Older posts of theirs, above that third person,
+   don't count.
+4. A PR named by a post in the run is on `review-turn` while **nobody but
+   you** has a review emoji on any post naming it (the same union as the
+   tags).
+
+Only posts that name a PR count anywhere in this walk: a "thanks!" between
+two PR posts is not a poster. Example, oldest first:
+
+| post | turn |
+| --- | --- |
+| alice: acme/api#1 | |
+| bob: acme/api#2 | |
+| you: acme/api#3 | bob's #2, not alice's #1: that is bob's to review |
+| bob: acme/api#4 | |
+| you: acme/api#5 | #2 and #4: one run of bob's, your #3 skipped |
+| carol 👀 on #4 | #2 only |
+
+Every event recomputes the turn: a new post, an edit, a delete (deleting
+your newest post falls back to your previous one) or a reaction. A PR
+joining or leaving it is re-emitted, full state as always, even when the
+event was about another message. Whether GitHub still wants a review
+(open, not a draft, `review:required`) is the view's local filter in
+anton, not the plugin's; with `"notify": true` on that view anton tells you
+when a PR newly shows in it (`01-anton.md`, "Notify").
+
 **Deploy channel.** p2r2 *adds* a reaction at each step and leaves the
 earlier ones, so a message's state is the **furthest** step present — the same
 rule slkx-alerts uses. The steps, in order, and what each shows:
@@ -137,6 +174,7 @@ goes back to `queued` as soon as p2r2 moves on. The defaults are the
 State (in `fold.hpp`, pure — events in, changed PR URLs out):
 - `msgs: (channel, ts) → [pr urls]`
 - `reacts: (channel, ts) → set of (emoji, user)`
+- `poster: (channel, ts) → user id` (a bot's `bot_id` when it has no user)
 - `names: user id → handle`, from `user_names` in slkx's cache
   (`slkx channels --json` prints the whole cache: `channels`, `ids`,
   `user_names`); `me` from `slkx auth status --json` → `user_id`
@@ -160,8 +198,8 @@ State (in `fold.hpp`, pure — events in, changed PR URLs out):
    | anything else | ignore |
 
    After each event, emit a `pr` line for every PR whose derived output changed.
-3. **Derive** a PR's line from all messages naming it: `lists` if any review
-   message; `tags` from review-emoji reactions on review messages; `status`
+3. **Derive** a PR's line from all messages naming it: `code-review` if any
+   review message, `review-turn` if it is in your review turn; `tags` from review-emoji reactions on review messages; `status`
    from the most recent deploy message without a clear emoji, using the
    furthest `--deploy-state` step present. Full state each time, per the
    protocol.
@@ -190,5 +228,6 @@ plugins/slkx/fold.hpp   the pure fold + derive
 tests/fold_check.cpp    feeds recorded slkx JSON through the fold, asserts
                         the emitted lines (post, react, unreact, edit, delete,
                         repost-union, deploy steps incl. Ready? → queued,
-                        deploy + reject, v toggle, approved swap)
+                        deploy + reject, v toggle, approved swap, review
+                        turn runs)
 ```

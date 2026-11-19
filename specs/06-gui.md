@@ -249,7 +249,8 @@ for the session.
   own window). The View menu has the same switches.
 - **Views**: the views in order (drag a row's grip to reorder), each
   with Edit: name, what it shows (a GitHub search, or a plugin's list and
-  which), its filter (a list view's must pass the local filter), sort,
+  which, and for a list view its Notify checkbox, `01-anton.md`), its
+  filter (a list view's must pass the local filter), sort,
   Duplicate, Delete (asks first). `New view` adds a saved one.
 - **Plugins**: per plugin its dot, state, PR count and keys, `Restart`,
   `Open <file>` (its `--config`, else `llm.json` / `temoc.json` in the
